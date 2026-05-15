@@ -41,6 +41,65 @@ def _build_args(name: str, state: AgentState) -> dict[str, Any]:
     return {"ticker": ticker}
 
 
+def _trim_for_stream(name: str, data: Any) -> Any:
+    """Trim a tool's structured result for the SSE wire — keep the fields the
+    live UI needs, drop heavy payloads."""
+    if not isinstance(data, dict):
+        return data
+    if name == "news_sentiment":
+        return {
+            "distribution": data.get("distribution"),
+            "overall_score": data.get("overall_score"),
+            "confidence": data.get("confidence"),
+            "articles": [
+                {
+                    "url": a.get("url"),
+                    "title": a.get("title"),
+                    "source": a.get("source"),
+                    "published_at": a.get("published_at"),
+                    "sentiment": a.get("sentiment"),
+                    "sentiment_score": a.get("sentiment_score"),
+                }
+                for a in (data.get("articles") or [])[:8]
+            ],
+        }
+    if name == "market_data":
+        return {
+            k: data.get(k)
+            for k in (
+                "ticker",
+                "company_name",
+                "sector",
+                "sector_etf",
+                "price",
+                "daily_change_pct",
+                "volume",
+                "market_cap",
+                "pe_ratio",
+                "fifty_two_week_high",
+                "fifty_two_week_low",
+                "last_two_quarterly_revenues",
+                "delisted",
+            )
+        }
+    if name == "correlation":
+        return {
+            k: data.get(k)
+            for k in (
+                "vs_sp500",
+                "vs_sector_etf",
+                "sector_etf_symbol",
+                "vs_peers",
+                "window_days",
+            )
+        }
+    if name == "edgar_filings":
+        return {"filings": (data.get("filings") or [])[:5]}
+    if name == "peer_fundamentals":
+        return {"peers": (data.get("peers") or [])[:5]}
+    return data
+
+
 def _default_peers(ticker: str) -> list[str]:
     """Cheap fallback peer list when none provided."""
     common = {
@@ -95,6 +154,10 @@ async def run(state: AgentState, tools_by_name: dict[str, Tool], budget: JobBudg
                     "latency_ms": result.latency_ms,
                     "status": result.status,
                     "error": result.error,
+                    # Surface the structured result so the live UI can fill
+                    # in market / correlation / sentiment cards as each tool
+                    # completes (rather than all-at-once on `done`).
+                    "data": _trim_for_stream(name, result.data) if result.ok else None,
                 },
             )
 
