@@ -187,6 +187,8 @@ class NewsSentimentTool(Tool):
     name = "news_sentiment"
     upstream = "newsapi"
 
+    # Allow subclasses (e.g. PeerNewsTool) to override the tool name without
+    # rewriting the whole class.
     def __init__(self, llm_factory):
         self._llm_factory = llm_factory
 
@@ -297,6 +299,74 @@ class NewsSentimentTool(Tool):
         d = output.get("distribution", {})
         return (
             f"{output.get('ticker')}: {d.get('positive', 0)}+ "
+            f"{d.get('neutral', 0)}~ {d.get('negative', 0)}- "
+            f"(overall {output.get('overall_score', 0):.2f})"
+        )
+
+
+class PeerNewsTool(NewsSentimentTool):
+    """Brief §3A reflection trigger 1 demands "a direct competitor's recent
+    news and price action". Peer price action is in correlation.vs_peers;
+    this tool fills the news half by running NewsSentimentTool against
+    the first peer ticker passed in.
+    """
+
+    name = "peer_news"
+    upstream = "newsapi"
+
+    def schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": (
+                    "Fetch and classify the 5 most recent news articles for "
+                    "a direct competitor (the first ticker in `peers`). Use "
+                    "this on reflection after a high sector-correlation "
+                    "signal — peer news disambiguates company-specific vs "
+                    "sector-wide weakness."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "peers": {"type": "array", "items": {"type": "string"}},
+                        "company_name": {"type": "string"},
+                    },
+                    "required": ["peers"],
+                },
+            },
+        }
+
+    async def _run(  # type: ignore[override]
+        self,
+        peers: list[str] | None = None,
+        company_name: str | None = None,
+        parent_budget: JobBudget | None = None,
+    ) -> dict[str, Any]:
+        if not peers:
+            return {
+                "ticker": None,
+                "articles": [],
+                "distribution": {"positive": 0, "negative": 0, "neutral": 0, "total": 0},
+                "overall_score": 0.0,
+                "confidence": 0.0,
+                "fetched_at": datetime.now(UTC).isoformat(),
+                "note": "no peer tickers provided",
+            }
+        # Use the first peer as the comparator; aspirational future work
+        # could fan out to multiple but the brief asks for "a direct
+        # competitor" (singular).
+        peer_ticker = peers[0]
+        return await super()._run(
+            ticker=peer_ticker, company_name=None, parent_budget=parent_budget
+        )
+
+    def summarize(self, output: dict[str, Any]) -> str:
+        if not output.get("ticker"):
+            return output.get("note", "no peer news")
+        d = output.get("distribution", {})
+        return (
+            f"peer {output.get('ticker')}: {d.get('positive', 0)}+ "
             f"{d.get('neutral', 0)}~ {d.get('negative', 0)}- "
             f"(overall {output.get('overall_score', 0):.2f})"
         )

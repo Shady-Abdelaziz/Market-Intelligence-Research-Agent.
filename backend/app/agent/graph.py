@@ -22,7 +22,7 @@ from app.tools.base import Tool
 from app.tools.correlation import CorrelationTool
 from app.tools.edgar import EdgarTool
 from app.tools.market_data import MarketDataTool
-from app.tools.news_sentiment import NewsSentimentTool
+from app.tools.news_sentiment import NewsSentimentTool, PeerNewsTool
 from app.tools.peer_fundamentals import PeerFundamentalsTool
 
 
@@ -33,6 +33,7 @@ def build_tools(llm_factory) -> dict[str, Tool]:
         "correlation": CorrelationTool(),
         "peer_fundamentals": PeerFundamentalsTool(),
         "edgar_filings": EdgarTool(),
+        "peer_news": PeerNewsTool(llm_factory=llm_factory),
     }
 
 

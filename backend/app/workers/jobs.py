@@ -220,18 +220,3 @@ async def monitor_tick(ctx: dict[str, Any], target_id: str) -> None:
         if pool:
             await pool.enqueue_job("analyze_ticker", new_job_id, _queue_name="mira_jobs")
         log.info("monitor_alert", ticker=ticker, triggers=fired, new_job_id=new_job_id)
-
-
-# Patch MonitorRepo dummy method used above
-def _patch_repo() -> None:
-    from app.persistence import repos as _repos
-
-    if not hasattr(_repos.MonitorRepo, "get_by_ticker_id_or_ticker"):
-
-        async def _stub(self, _):
-            return None
-
-        _repos.MonitorRepo.get_by_ticker_id_or_ticker = _stub  # type: ignore
-
-
-_patch_repo()

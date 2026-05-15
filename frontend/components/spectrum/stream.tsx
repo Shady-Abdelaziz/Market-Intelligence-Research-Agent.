@@ -990,8 +990,14 @@ function reduce(
         };
       } else if (name === "correlation") {
         next = { ...next, correlation: buildCorrelationFromTool(tdata) };
-      } else if (name === "news_sentiment" || name === "news_sentiment_peer") {
+      } else if (name === "news_sentiment") {
         next = { ...next, sentiment: buildSentimentFromTool(tdata) };
+      } else if (name === "peer_news") {
+        // Peer news is a separate signal (a competitor's articles) — surface
+        // it as a sentiment overlay only if we don't already have primary
+        // sentiment, otherwise leave the primary card untouched. The
+        // timeline event still shows the peer ticker.
+        if (!next.sentiment) next = { ...next, sentiment: buildSentimentFromTool(tdata) };
       }
       return next;
     }

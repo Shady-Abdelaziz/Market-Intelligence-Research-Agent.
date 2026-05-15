@@ -84,11 +84,13 @@ A line-by-line map from the Uniparticle brief (CS-001 Rev. B) to the code that s
 
 | Brief item | Code location |
 |---|---|
-| Multi-step planning behaviour | LangGraph state machine: `backend/app/agent/graph.py` (planner → tool_executor → reflection_critic → conditional edge) |
-| Function-calling-style tool dispatch | Planner emits a typed `next_tools` list; tool executor invokes by name (`backend/app/agent/nodes/tool_executor.py`) |
+| Multi-step planning behaviour | LangGraph state machine: `backend/app/agent/graph.py` (planner → tool_executor → reflection_critic → conditional edge). Planner consults the LLM on **every** pass — initial query → tool list, reflection → addition tools — with a deterministic fallback if the LLM is unreachable. |
+| Function-calling-style tool dispatch | Each tool exposes an OpenAI-compatible `schema()` (`tools/base.py`). Planner emits a typed `next_tools` list; tool executor invokes by name (`backend/app/agent/nodes/tool_executor.py`). |
 | **Tool 1 — Market Data** (yfinance, price/change/volume/cap/P/E/52w/last 2 quarterly revenues) | `backend/app/tools/market_data.py` |
 | **Tool 2 — News + Sentiment** (NewsAPI top 5, per-article tags, distribution) | `backend/app/tools/news_sentiment.py` |
 | **Tool 3 — Peer/Correlation** (mock for fundamentals, real for correlations) | `backend/app/tools/peer_fundamentals.py` (mock per brief wording) + `backend/app/tools/correlation.py` (real Pearson) |
+| **Bonus Tool 4 — EDGAR filings** (10-K / 10-Q / 8-K) | `backend/app/tools/edgar.py` (used on reflection when news is stale) |
+| **Bonus Tool 5 — Peer news** (real NewsAPI for a direct competitor) | `backend/app/tools/news_sentiment.py::PeerNewsTool` (used on reflection trigger 1) |
 | Sentiment trade-off documented | This README — *Sentiment trade-off* table below |
 
 ### §2C — Output Structure (mandatory minimum fields)
@@ -103,7 +105,7 @@ A real validated report is at `sample_output.json` (passes `AnalysisReport.model
 
 | Brief trigger | Threshold | Code |
 |---|---|---|
-| Sector ETF correlation > 0.95 → peer-comparison pass | `REFLECTION_SECTOR_CORR_THRESHOLD=0.95` | `backend/app/agent/nodes/reflection_critic.py::trigger_sector_correlation` → planner adds `peer_fundamentals` |
+| Sector ETF correlation > 0.95 → fetch competitor's recent news + price action | `REFLECTION_SECTOR_CORR_THRESHOLD=0.95` | `reflection_critic.py::trigger_sector_correlation` → planner adds `peer_news` (real NewsAPI for first peer ticker) AND `peer_fundamentals` (mock). Peer price action is already in `correlation.vs_peers`. |
 | All news > 72 h old → broaden / fetch SEC EDGAR | `REFLECTION_STALE_NEWS_HOURS=72` | `reflection_critic.py::trigger_stale_news` → planner adds `edgar_filings` |
 | Perfectly neutral or evenly split sentiment → fetch additional context | n/a | `reflection_critic.py::trigger_neutral_sentiment` → planner adds `edgar_filings` |
 | Re-plan capped by `MAX_REFLECTION_PASSES` | `config.py` (default 2) | `reflection_critic.py::run` |

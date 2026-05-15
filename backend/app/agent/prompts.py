@@ -17,6 +17,7 @@ Tools:
 - market_data(ticker): structured price/fundamentals snapshot
 - news_sentiment(ticker, company_name): top 5 articles + per-article sentiment
 - correlation(ticker, sector_etf, peers, window_days): real Pearson correlation
+- peer_news(peers): top 5 articles + sentiment for the FIRST peer ticker
 - peer_fundamentals(peers): MOCK peer revenue/price (use when correlation alone is not enough)
 - edgar_filings(ticker, days): recent SEC 10-K/10-Q/8-K filings (use when news is stale or for official disclosures)
 
@@ -24,13 +25,23 @@ Be concise and decisive. Do not invent data — only use what tools return.
 If a tool fails or returns no data, acknowledge the gap honestly.
 """
 
-PLANNER_PROMPT = """Given the query and (if any) prior tool results, decide which
-tools to call NEXT. Output ONLY a JSON object:
+PLANNER_PROMPT = """Decide which tools to call NEXT to make progress on the
+operator's question. Output ONLY a JSON object:
 {"plan": "one-sentence rationale", "tools": ["market_data", "news_sentiment", "correlation"]}
 
-Do not include any tool names not in the available list. Order matters.
-If this is a reflection pass (triggers_fired is non-empty), only call the
-additional tools needed to resolve those triggers.
+Rules:
+- On the INITIAL pass (no prior tool results), call AT LEAST market_data,
+  news_sentiment, and correlation. You may add more if the query asks for
+  filings or a specific peer comparison up front.
+- On a REFLECTION pass (triggers_fired is non-empty), call ONLY the
+  additional tools needed to address those triggers — don't re-run tools
+  whose data is already in tool_results_summary.
+- For trigger=sector_correlation, calling peer_news (a direct competitor's
+  recent news) is the highest-signal next step; peer_fundamentals adds
+  a numeric comparison if you need one.
+- For trigger=stale_news or neutral_sentiment, edgar_filings is the
+  canonical source for fresh, authoritative material.
+- Do not include any tool names not in available_tools. Order matters.
 """
 
 REFLECTION_PROMPT = """You are the reflection critic for M.I.R.A. Evaluate

@@ -36,6 +36,11 @@ def _build_args(name: str, state: AgentState) -> dict[str, Any]:
         }
     if name == "peer_fundamentals":
         return {"peers": state.get("peers") or _default_peers(ticker)}
+    if name == "peer_news":
+        return {
+            "peers": state.get("peers") or _default_peers(ticker),
+            "company_name": state.get("company_name"),
+        }
     if name == "edgar_filings":
         return {"ticker": ticker, "days": 30}
     return {"ticker": ticker}
@@ -46,8 +51,9 @@ def _trim_for_stream(name: str, data: Any) -> Any:
     live UI needs, drop heavy payloads."""
     if not isinstance(data, dict):
         return data
-    if name == "news_sentiment":
+    if name in ("news_sentiment", "peer_news"):
         return {
+            "ticker": data.get("ticker"),
             "distribution": data.get("distribution"),
             "overall_score": data.get("overall_score"),
             "confidence": data.get("confidence"),
@@ -138,10 +144,10 @@ async def run(state: AgentState, tools_by_name: dict[str, Tool], budget: JobBudg
             args = _build_args(name, state)
             await emit(job_id, "tool_start", {"tool": name, "input": args})
 
-            # news_sentiment's _run() accepts an optional `budget` kwarg used
-            # internally for per-article sentiment classification.
+            # news_sentiment + peer_news's _run() accept an optional budget
+            # kwarg used for per-article sentiment classification.
             call_kwargs = dict(args)
-            if name == "news_sentiment":
+            if name in ("news_sentiment", "peer_news"):
                 call_kwargs["parent_budget"] = budget
             result: ToolResult = await tool.invoke(budget=budget, **call_kwargs)
 
@@ -193,7 +199,7 @@ async def run(state: AgentState, tools_by_name: dict[str, Tool], budget: JobBudg
                     degraded = True
                     degradation_reason = degradation_reason or "DELISTED"
                 # Capture citation URLs from news
-                if name == "news_sentiment":
+                if name in ("news_sentiment", "peer_news"):
                     for a in result.data.get("articles", []):
                         url = a.get("url")
                         if url and url not in citation_urls:
