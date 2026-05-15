@@ -5,17 +5,21 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, status
 
 from app.api.schemas import AnalyzeRequest, AnalyzeResponse
+from app.config import get_settings
 from app.observability.logging import get_logger
+from app.observability.ratelimit import limiter
 from app.persistence.db import get_session
 from app.persistence.repos import JobRepo
 
 router = APIRouter(tags=["analyze"])
 log = get_logger(__name__)
+_settings = get_settings()
 
 
 @router.post("/analyze", response_model=AnalyzeResponse, status_code=status.HTTP_202_ACCEPTED)
-async def analyze(req: AnalyzeRequest, request: Request) -> AnalyzeResponse:
-    """Submit an analysis. Rate-limited via SlowAPIMiddleware."""
+@limiter.limit(_settings.ratelimit_analyze)
+async def analyze(request: Request, req: AnalyzeRequest) -> AnalyzeResponse:
+    """Submit an analysis. Rate-limited per the settings.ratelimit_analyze key."""
     async with get_session() as session:
         job = await JobRepo(session).create(query=req.query)
         job_id = str(job.id)

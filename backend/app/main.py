@@ -9,15 +9,14 @@ from contextlib import asynccontextmanager
 from arq import create_pool
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
 
 from app.api import analyze, monitor, ops, status
 from app.cache.redis_cache import close_cache, init_cache
 from app.config import get_settings
 from app.observability.logging import configure_logging, get_logger, request_id_var
+from app.observability.ratelimit import limiter
 from app.persistence.db import dispose_engine, get_session
 from app.persistence.repos import JobRepo
 from app.resilience.http_client import close_client, init_client
@@ -26,7 +25,6 @@ from app.workers.arq_settings import _redis_settings
 configure_logging()
 log = get_logger(__name__)
 settings = get_settings()
-limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
