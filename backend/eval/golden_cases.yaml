@@ -1,0 +1,41 @@
+cases:
+  - name: aapl_self_correlation
+    query: "Analyze Apple Inc. (AAPL)"
+    expect:
+      status: completed
+      ticker: AAPL
+      key_findings_count: 3
+      degraded: false
+
+  - name: unknown_ticker
+    query: "Analyze the prospects of ZZZZZ123 Holdings"
+    expect:
+      status_in: [failed, completed]   # completed-with-degraded also acceptable
+      degraded_or_failed: true
+
+  - name: delisted_ticker
+    query: "Analyze Lehman Brothers (LEHMQ)"
+    expect:
+      status: completed
+      degraded: true
+
+  - name: tsla_idiosyncratic
+    query: "Analyze Tesla (TSLA)"
+    expect:
+      status: completed
+      ticker: TSLA
+      key_findings_count: 3
+
+  - name: ko_sector_correlated
+    query: "Analyze Coca-Cola (KO)"
+    expect:
+      status: completed
+      ticker: KO
+      key_findings_count: 3
+
+  - name: msft_basic
+    query: "What's the outlook for Microsoft (MSFT)?"
+    expect:
+      status: completed
+      ticker: MSFT
+      key_findings_count: 3

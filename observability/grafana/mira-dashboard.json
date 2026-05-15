@@ -1,0 +1,194 @@
+{
+  "title": "M.I.R.A. — Market Intelligence & Research Agent",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "tags": ["mira", "agent", "fintech"],
+  "time": {"from": "now-6h", "to": "now"},
+  "templating": {"list": []},
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Jobs / hour (completed)",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {"expr": "sum(rate(mira_jobs_total{status=\"completed\"}[1h])) * 3600", "refId": "A"}
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Jobs / hour (failed)",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {"expr": "sum(rate(mira_jobs_total{status=\"failed\"}[1h])) * 3600", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "red", "value": 5}]}}}
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "LLM cost ($, last 24h)",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {"expr": "sum(increase(mira_llm_cost_usd_total[24h]))", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "currencyUSD"}}
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "p95 job duration (s)",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(mira_job_duration_seconds_bucket[15m])))", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Reflection passes (avg)",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 16, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {"expr": "sum(rate(mira_reflection_passes_sum[1h])) / sum(rate(mira_reflection_passes_count[1h]))", "refId": "A"}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Open circuit breakers",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {"expr": "sum(mira_circuit_breaker_state == 1)", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "red", "value": 1}]}}}
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Job throughput by status",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (status) (rate(mira_jobs_total[5m]))", "refId": "A", "legendFormat": "{{status}}"}
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Job duration p50/p95/p99 (s)",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum by (le) (rate(mira_job_duration_seconds_bucket[5m])))", "refId": "A", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(mira_job_duration_seconds_bucket[5m])))", "refId": "B", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.99, sum by (le) (rate(mira_job_duration_seconds_bucket[5m])))", "refId": "C", "legendFormat": "p99"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Tool call rate by tool",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (tool) (rate(mira_tool_call_total[5m]))", "refId": "A", "legendFormat": "{{tool}}"}
+      ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Tool error rate (failures / total)",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (tool) (rate(mira_tool_call_total{status=\"failure\"}[5m])) / clamp_min(sum by (tool) (rate(mira_tool_call_total[5m])), 1e-9)", "refId": "A", "legendFormat": "{{tool}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "max": 1, "min": 0}}
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Tool p95 latency (s)",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (le, tool) (rate(mira_tool_call_latency_seconds_bucket[5m])))", "refId": "A", "legendFormat": "{{tool}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "LLM tokens / s (by type)",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (type) (rate(mira_llm_tokens_total[5m]))", "refId": "A", "legendFormat": "{{type}}"}
+      ]
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "LLM cost burn ($/h) by model",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 0, "y": 28, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (model) (rate(mira_llm_cost_usd_total[15m])) * 3600", "refId": "A", "legendFormat": "{{model}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "currencyUSD"}}
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "LLM call latency p95 (s) by model",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 12, "y": 28, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (le, model) (rate(mira_llm_call_latency_seconds_bucket[5m])))", "refId": "A", "legendFormat": "{{model}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 40,
+      "type": "timeseries",
+      "title": "Monitor triggers / 5m",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 0, "y": 36, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (trigger) (rate(mira_monitor_triggers_total[5m]))", "refId": "A", "legendFormat": "{{trigger}}"}
+      ]
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "Cache hit rate",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 12, "y": 36, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (cache) (rate(mira_cache_hits_total[5m])) / clamp_min(sum by (cache) (rate(mira_cache_hits_total[5m])) + sum by (cache) (rate(mira_cache_misses_total[5m])), 1e-9)", "refId": "A", "legendFormat": "{{cache}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}}
+    },
+    {
+      "id": 50,
+      "type": "timeseries",
+      "title": "Circuit breaker state (0=closed,1=open,2=halfopen)",
+      "datasource": {"type": "prometheus", "uid": "PROM"},
+      "gridPos": {"x": 0, "y": 44, "w": 24, "h": 8},
+      "targets": [
+        {"expr": "mira_circuit_breaker_state", "refId": "A", "legendFormat": "{{upstream}}"}
+      ]
+    }
+  ]
+}

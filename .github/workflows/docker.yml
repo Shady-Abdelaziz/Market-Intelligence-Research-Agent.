@@ -1,0 +1,22 @@
+name: docker
+on:
+  push:
+    branches: ["**"]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t mira-backend:ci backend/
+      - name: Build frontend image
+        run: docker build -t mira-frontend:ci frontend/
+      - name: Smoke test (api boots in SQLite mode)
+        run: |
+          docker run --rm -d --name mira-api \
+            -e DATABASE_URL=sqlite+aiosqlite:///./mira.db \
+            -e OPENROUTER_API_KEY=dummy \
+            -p 8000:8000 mira-backend:ci
+          sleep 8
+          curl -sf http://localhost:8000/health || (docker logs mira-api && exit 1)
+          docker stop mira-api
