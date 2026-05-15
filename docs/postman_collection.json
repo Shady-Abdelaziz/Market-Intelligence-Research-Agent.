@@ -1,0 +1,142 @@
+{
+  "info": {
+    "name": "M.I.R.A. — Market Intelligence & Research Agent",
+    "_postman_id": "mira-001",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Endpoints for the M.I.R.A. autonomous market intelligence agent."
+  },
+  "variable": [
+    {"key": "base", "value": "http://localhost:8000"}
+  ],
+  "item": [
+    {
+      "name": "Analyze — submit",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": {"raw": "{{base}}/analyze", "host": ["{{base}}"], "path": ["analyze"]},
+        "body": {"mode": "raw", "raw": "{\n  \"query\": \"Analyze the near-term prospects of Tesla, Inc. (TSLA).\"\n}"}
+      },
+      "response": [
+        {
+          "name": "202 Accepted",
+          "originalRequest": {"method": "POST", "url": "{{base}}/analyze", "body": {"mode": "raw", "raw": "{\"query\":\"Analyze Tesla (TSLA)\"}"}},
+          "status": "Accepted",
+          "code": 202,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"job_id\": \"8b3e9f6a-4e4d-4c2c-8a1f-6c9a5f3b3a1b\",\n  \"status\": \"queued\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "Status — poll",
+      "request": {
+        "method": "GET",
+        "url": {"raw": "{{base}}/status/:job_id", "host": ["{{base}}"], "path": ["status", ":job_id"], "variable": [{"key": "job_id", "value": "8b3e9f6a-4e4d-4c2c-8a1f-6c9a5f3b3a1b"}]}
+      },
+      "response": [
+        {
+          "name": "200 — running",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"job_id\": \"8b3e9f6a-...\",\n  \"status\": \"running\",\n  \"created_at\": \"2026-05-15T14:23:00+00:00\",\n  \"started_at\": \"2026-05-15T14:23:02+00:00\"\n}"
+        },
+        {
+          "name": "200 — completed",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"job_id\": \"8b3e9f6a-...\",\n  \"status\": \"completed\",\n  \"report\": { \"company_ticker\": \"TSLA\", \"company_name\": \"Tesla, Inc.\", \"sentiment_score\": 0.18, \"key_findings\": [\"...\", \"...\", \"...\"], \"tools_used\": [\"market_data\", \"news_sentiment\", \"correlation\"], \"generated_at\": \"2026-05-15T14:23:18+00:00\" }\n}"
+        }
+      ]
+    },
+    {
+      "name": "Status — SSE stream",
+      "request": {
+        "method": "GET",
+        "header": [{"key": "Accept", "value": "text/event-stream"}],
+        "url": {"raw": "{{base}}/status/:job_id/stream", "host": ["{{base}}"], "path": ["status", ":job_id", "stream"], "variable": [{"key": "job_id", "value": "8b3e9f6a-4e4d-4c2c-8a1f-6c9a5f3b3a1b"}]}
+      },
+      "response": [
+        {
+          "name": "200 — event stream",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "text/event-stream"}],
+          "body": "event: ticker_resolved\ndata: {\"ticker\":\"TSLA\",\"company_name\":\"Tesla, Inc.\"}\n\nevent: planner_decision\ndata: {\"plan\":\"Initial research pass\",\"tools\":[\"market_data\",\"news_sentiment\",\"correlation\"]}\n\nevent: tool_start\ndata: {\"tool\":\"market_data\",\"input\":{\"ticker\":\"TSLA\"}}\n\nevent: tool_end\ndata: {\"tool\":\"market_data\",\"latency_ms\":412,\"status\":\"success\"}\n\nevent: done\ndata: {\"report\":{...}}"
+        }
+      ]
+    },
+    {
+      "name": "Monitor — start",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": {"raw": "{{base}}/monitor_start", "host": ["{{base}}"], "path": ["monitor_start"]},
+        "body": {"mode": "raw", "raw": "{\n  \"ticker\": \"AAPL\",\n  \"cadence_seconds\": 86400,\n  \"peers\": [\"MSFT\", \"GOOGL\"]\n}"}
+      },
+      "response": [
+        {
+          "name": "200 OK",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"id\": \"c1a2b3d4-...\",\n  \"ticker\": \"AAPL\",\n  \"cadence_seconds\": 86400,\n  \"active\": true,\n  \"next_run_at\": \"2026-05-16T14:23:00+00:00\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "Monitor — list",
+      "request": {"method": "GET", "url": {"raw": "{{base}}/monitor", "host": ["{{base}}"], "path": ["monitor"]}},
+      "response": [
+        {
+          "name": "200 OK",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "[\n  {\"id\":\"c1a2b3d4-...\",\"ticker\":\"AAPL\",\"cadence_seconds\":86400,\"peers\":[\"MSFT\",\"GOOGL\"],\"active\":true,\"last_run_at\":null,\"baseline_price_mean\":189.4,\"baseline_price_std\":3.2,\"baseline_volume_avg\":52000000}\n]"
+        }
+      ]
+    },
+    {
+      "name": "Monitor — delete",
+      "request": {
+        "method": "DELETE",
+        "url": {"raw": "{{base}}/monitor/:ticker", "host": ["{{base}}"], "path": ["monitor", ":ticker"], "variable": [{"key": "ticker", "value": "AAPL"}]}
+      },
+      "response": [{"name": "200 OK", "status": "OK", "code": 200, "body": "{\"ticker\":\"AAPL\",\"active\":false}"}]
+    },
+    {
+      "name": "Monitor — history",
+      "request": {
+        "method": "GET",
+        "url": {"raw": "{{base}}/monitor/:ticker/history", "host": ["{{base}}"], "path": ["monitor", ":ticker", "history"], "variable": [{"key": "ticker", "value": "AAPL"}]}
+      },
+      "response": [
+        {
+          "name": "200 OK",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "[\n  {\n    \"job_id\": \"...\",\n    \"ticker\": \"AAPL\",\n    \"status\": \"completed\",\n    \"alert_tag\": \"PROACTIVE_ALERT\",\n    \"triggers_fired\": [\"volume_2x\"],\n    \"created_at\": \"2026-05-15T18:00:00+00:00\",\n    \"completed_at\": \"2026-05-15T18:01:30+00:00\",\n    \"report\": {\"...\":\"...\"}\n  }\n]"
+        }
+      ]
+    },
+    {
+      "name": "Ops — health",
+      "request": {"method": "GET", "url": {"raw": "{{base}}/health", "host": ["{{base}}"], "path": ["health"]}},
+      "response": [{"name": "200 OK", "code": 200, "status": "OK", "body": "{\"status\":\"ok\"}"}]
+    },
+    {
+      "name": "Ops — ready",
+      "request": {"method": "GET", "url": {"raw": "{{base}}/ready", "host": ["{{base}}"], "path": ["ready"]}},
+      "response": [{"name": "200 OK", "code": 200, "status": "OK", "body": "{'database':'ok','redis':'ok'}"}]
+    },
+    {
+      "name": "Ops — metrics",
+      "request": {"method": "GET", "url": {"raw": "{{base}}/metrics", "host": ["{{base}}"], "path": ["metrics"]}},
+      "response": [{"name": "200 OK", "code": 200, "status": "OK", "header": [{"key": "Content-Type", "value": "text/plain; version=0.0.4"}], "body": "# HELP mira_jobs_total ...\n# TYPE mira_jobs_total counter\nmira_jobs_total{status=\"completed\"} 1.0\n..."}]
+    }
+  ]
+}

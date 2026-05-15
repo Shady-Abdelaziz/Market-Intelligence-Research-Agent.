@@ -1,0 +1,77 @@
+{
+  "company_ticker": "TSLA",
+  "company_name": "Tesla, Inc.",
+  "analysis_summary": "Tesla (TSLA) trades at $238.45 (+1.62% on the session) on a $760B market cap with a trailing P/E of 64.3. Sentiment across the five most recent relevant articles skews mildly positive (overall score +0.18, 2 positive / 1 negative / 2 neutral) driven by news of an EU regulatory tailwind and a fresh battery-supply partnership; the negative outlier covers a senior-engineering departure. Daily-return correlation with the consumer-cyclical sector ETF (XLY) is 0.71 over the trailing 90 trading days, meaning roughly half of TSLA's variance is idiosyncratic and the other half tracks the broader cyclical-discretionary complex. SPY correlation is 0.62; vs Ford (F) 0.48 and GM 0.51. No reflection triggers fired this pass.",
+  "sentiment_score": 0.18,
+  "market_snapshot": {
+    "price": 238.45,
+    "daily_change_pct": 1.62,
+    "volume": 87234100,
+    "market_cap": 760200000000,
+    "pe_ratio": 64.3,
+    "fifty_two_week_high": 299.29,
+    "fifty_two_week_low": 138.8,
+    "last_two_quarterly_revenues": [
+      {"quarter": "2026 Q1", "revenue_usd": 25710000000, "reported_at": "2026-04-23T00:00:00+00:00"},
+      {"quarter": "2025 Q4", "revenue_usd": 25170000000, "reported_at": "2026-01-24T00:00:00+00:00"}
+    ]
+  },
+  "correlation_analysis": {
+    "vs_sp500": 0.62,
+    "vs_sector_etf": 0.71,
+    "sector_etf_symbol": "XLY",
+    "vs_peers": {"F": 0.48, "GM": 0.51},
+    "window_days": 90
+  },
+  "key_findings": [
+    "Stock is moderately idiosyncratic — sector ETF correlation 0.71 is below the 0.95 reflection threshold, so single-stock catalysts (news, product launches, earnings) materially move the price independent of XLY.",
+    "Recent EU regulatory tailwind and a new battery-supply partnership are driving the +0.18 sentiment skew; one negative datapoint (senior engineering departure) is contained.",
+    "Valuation remains stretched at 64x trailing P/E versus peer GM at ~6x and F at ~7x — multiple compression risk is the largest single near-term downside, irrespective of news flow."
+  ],
+  "tools_used": ["market_data", "news_sentiment", "correlation"],
+  "citation_sources": [
+    "https://www.reuters.com/business/autos-transportation/eu-tesla-emissions-credits-2026-05-13/",
+    "https://www.bloomberg.com/news/articles/2026-05-12/tesla-battery-supply-lg-energy",
+    "https://www.cnbc.com/2026/05/11/tesla-q1-deliveries-mixed.html",
+    "https://www.theverge.com/2026/05/10/tesla-engineering-departure.html",
+    "https://www.wsj.com/articles/tesla-china-pricing-update-2026-05-09"
+  ],
+  "generated_at": "2026-05-15T14:23:18.412+00:00",
+  "degraded": false,
+  "degradation_reason": null,
+  "reflection_passes": 0,
+  "triggers_fired": [],
+  "confidence": 0.87,
+  "data_freshness": {
+    "newest_article_at": "2026-05-13T15:42:00+00:00",
+    "market_data_at": "2026-05-15T14:23:11.018+00:00",
+    "edgar_filing_at": null
+  },
+  "sentiment_distribution": {
+    "positive": 2,
+    "negative": 1,
+    "neutral": 2,
+    "total": 5,
+    "articles": [
+      {"url": "https://www.reuters.com/business/autos-transportation/eu-tesla-emissions-credits-2026-05-13/", "title": "EU expands emissions credit pool, lifts Tesla outlook", "source": "Reuters", "published_at": "2026-05-13T15:42:00+00:00", "sentiment": "positive", "sentiment_score": 0.62, "rationale": "Regulatory tailwind boosts Tesla's credit-trading revenue stream."},
+      {"url": "https://www.bloomberg.com/news/articles/2026-05-12/tesla-battery-supply-lg-energy", "title": "Tesla locks in 5-year battery supply with LG Energy", "source": "Bloomberg", "published_at": "2026-05-12T11:18:00+00:00", "sentiment": "positive", "sentiment_score": 0.58, "rationale": "De-risks supply chain through 2031."},
+      {"url": "https://www.cnbc.com/2026/05/11/tesla-q1-deliveries-mixed.html", "title": "Tesla Q1 deliveries mixed; China demand resilient", "source": "CNBC", "published_at": "2026-05-11T19:02:00+00:00", "sentiment": "neutral", "sentiment_score": 0.05, "rationale": "Mixed regional signals balance out."},
+      {"url": "https://www.theverge.com/2026/05/10/tesla-engineering-departure.html", "title": "Senior autonomy lead departs Tesla for rival", "source": "The Verge", "published_at": "2026-05-10T20:15:00+00:00", "sentiment": "negative", "sentiment_score": -0.45, "rationale": "Talent loss in critical FSD program."},
+      {"url": "https://www.wsj.com/articles/tesla-china-pricing-update-2026-05-09", "title": "Tesla holds China prices flat as competitors discount", "source": "WSJ", "published_at": "2026-05-09T08:00:00+00:00", "sentiment": "neutral", "sentiment_score": 0.10, "rationale": "Margin-protective but cedes share."}
+    ]
+  },
+  "token_usage": {
+    "prompt_tokens": 14820,
+    "completion_tokens": 1842,
+    "total_tokens": 16662,
+    "cost_usd": 0.023133,
+    "model": "x-ai/grok-4.3"
+  },
+  "tool_invocations": [
+    {"name": "market_data", "input": {"ticker": "TSLA"}, "output_summary": "TSLA @ $238.45 (+1.62%)", "latency_ms": 412, "status": "success"},
+    {"name": "news_sentiment", "input": {"ticker": "TSLA", "company_name": "Tesla, Inc."}, "output_summary": "TSLA: 2+ 2~ 1- (overall 0.18)", "latency_ms": 3804, "status": "success"},
+    {"name": "correlation", "input": {"ticker": "TSLA", "sector_etf": "XLY", "peers": ["F", "GM"], "window_days": 90}, "output_summary": "vs SPY=0.62, vs XLY=0.71, peers=['F', 'GM']", "latency_ms": 1218, "status": "success"}
+  ],
+  "alert_tag": null,
+  "monitor_trigger": null
+}
