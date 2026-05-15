@@ -25,7 +25,36 @@ from app.tools.market_data import SECTOR_ETF_MAP
 
 log = get_logger(__name__)
 
-_TICKER_PATTERN = re.compile(r"\b([A-Z]{1,5})\b")
+# Explicit ticker forms: (TSLA), $TSLA, NASDAQ:TSLA, NYSE:TSLA, NASDAQ:BRK.B
+_EXPLICIT_TICKER_PATTERN = re.compile(
+    r"(?:\(([A-Z]{1,5}(?:[.\-][A-Z])?)\)"
+    r"|\$([A-Z]{1,5}(?:[.\-][A-Z])?)\b"
+    r"|(?:NASDAQ|NYSE|AMEX|NYSEARCA|OTC):([A-Z]{1,5}(?:[.\-][A-Z])?)\b)"
+)
+# Bare uppercase 2-5 char tokens (1-letter tokens are too ambiguous —
+# A, T, X, I all resolve to obscure tickers; require explicit form for those).
+_BARE_TICKER_PATTERN = re.compile(r"\b([A-Z]{2,5}(?:[.\-][A-Z])?)\b")
+
+# Common English words and finance jargon that happen to validate as obscure
+# tickers on yfinance. We reject these as bare matches; LLM can still resolve
+# the underlying company when one is implied.
+_STOPWORDS = {
+    # pronouns / articles / conjunctions / prepositions
+    "AN", "THE", "AT", "AS", "BE", "BY", "DO", "GO", "IF", "IN", "IS",
+    "IT", "MY", "NO", "OF", "ON", "OR", "SO", "TO", "UP", "US", "WE",
+    "AND", "BUT", "FOR", "NOT", "YOU", "ARE", "CAN", "GET", "HAS", "WAS",
+    "WHO", "WHY", "HOW", "OUT", "NEW", "NOW", "ALL", "ANY", "ITS", "OUR",
+    "HIS", "HER", "HIM", "SHE", "THEM", "THEY", "THIS", "THAT", "THESE",
+    "THOSE", "WITH", "FROM", "INTO", "OVER", "UNDER", "MORE", "MOST",
+    # query verbs/qualifiers common in MIRA prompts
+    "BIG", "DEEP", "DIVE", "BEST", "WORST", "NEAR", "TERM", "RECENT",
+    "BUY", "SELL", "HOLD", "TELL", "GIVE", "WHAT", "WHEN", "WHERE",
+    "ABOUT", "AROUND", "RIGHT", "WRONG", "GOOD", "BAD", "TODAY", "WEEK",
+    # finance jargon that's also an obscure ticker
+    "STOCK", "PRICE", "EARNINGS", "REVENUE", "MARKET", "SHARE", "SHARES",
+    "VALUE", "GROWTH", "RISK", "RISKS", "CASH", "DEBT", "BOND", "BONDS",
+    "ANALYSIS", "SHOULD", "COULD", "WOULD", "MIGHT", "WILL", "JUST",
+}
 
 
 def _verify_ticker_blocking(candidate: str) -> dict | None:
@@ -57,8 +86,26 @@ async def run(state: AgentState, llm_factory) -> AgentState:
     query = state["query"]
     job_id = state["job_id"]
 
-    # Try regex first
-    for match in _TICKER_PATTERN.findall(query):
+    # 1) Explicit ticker forms first — (TSLA), $TSLA, NASDAQ:TSLA. Unambiguous.
+    explicit: list[str] = []
+    for groups in _EXPLICIT_TICKER_PATTERN.findall(query):
+        for g in groups:
+            if g:
+                explicit.append(g)
+
+    # 2) Bare 2-5 char uppercase tokens, minus English/finance stopwords.
+    #    1-letter tickers are intentionally NOT picked up bare (too ambiguous);
+    #    they require explicit form ($T, (T), NYSE:T) or LLM resolution.
+    bare = [m for m in _BARE_TICKER_PATTERN.findall(query) if m not in _STOPWORDS]
+
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for c in explicit + bare:
+        if c not in seen:
+            seen.add(c)
+            candidates.append(c)
+
+    for match in candidates:
         verified = await _verify_ticker(match)
         if verified:
             await emit(

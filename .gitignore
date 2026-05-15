@@ -57,3 +57,4 @@ backend/eval/results/
 
 # Docker
 .dockerignore-local
+dump.rdb

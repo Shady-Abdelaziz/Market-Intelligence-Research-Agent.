@@ -28,6 +28,14 @@ async def get_status(job_id: str) -> dict[str, Any]:
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "started_at": job.started_at.isoformat() if job.started_at else None,
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            # Per-job observability per brief §3.C — surface token / cost /
+            # budget telemetry that's already persisted on the row.
+            "prompt_tokens": job.prompt_tokens,
+            "completion_tokens": job.completion_tokens,
+            "cost_usd": float(job.cost_usd) if job.cost_usd is not None else None,
+            "tool_calls_count": job.tool_calls_count,
+            "reflection_passes": job.reflection_passes,
+            "alert_tag": job.alert_tag,
         }
         if job.status == "completed" and job.result_json:
             out["report"] = job.result_json

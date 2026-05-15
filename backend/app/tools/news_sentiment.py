@@ -38,23 +38,20 @@ async def _fetch_newsapi(ticker: str, company_name: str | None) -> list[dict[str
     if not _settings.newsapi_key:
         return []
     client = get_client()
-    q_parts = [ticker]
-    if company_name:
-        q_parts.append(f'"{company_name}"')
-    q = " OR ".join(q_parts)
-    params = {
-        "q": q,
-        "language": "en",
-        "sortBy": "publishedAt",
-        "pageSize": 10,
-        "apiKey": _settings.newsapi_key,
-    }
-    r = await client.get("https://newsapi.org/v2/everything", params=params)
-    r.raise_for_status()
-    data = r.json()
-    out = []
-    for art in data.get("articles", []):
-        out.append(
+
+    # Strip common corporate suffixes so qInTitle works with the brand word.
+    short = (company_name or "").split(",")[0].strip()
+    for suffix in (" Inc", " Inc.", " Corp", " Corp.", " Corporation", " Co", " Co.", " Ltd", " Ltd.", " plc", " PLC"):
+        if short.endswith(suffix):
+            short = short[: -len(suffix)].strip()
+
+    async def _query(params: dict) -> list[dict[str, Any]]:
+        params = {**params, "language": "en", "sortBy": "publishedAt", "pageSize": 10, "apiKey": _settings.newsapi_key}
+        r = await client.get("https://newsapi.org/v2/everything", params=params)
+        if r.status_code >= 400:
+            return []
+        data = r.json()
+        return [
             {
                 "url": art.get("url"),
                 "title": art.get("title"),
@@ -63,7 +60,29 @@ async def _fetch_newsapi(ticker: str, company_name: str | None) -> list[dict[str
                 "published_at": art.get("publishedAt"),
                 "provider": "newsapi",
             }
-        )
+            for art in data.get("articles", [])
+        ]
+
+    # Tight query first: company name OR ticker in the title.
+    title_terms = [t for t in (short, ticker) if t]
+    out: list[dict[str, Any]] = []
+    if title_terms:
+        out = await _query({"qInTitle": " OR ".join(f'"{t}"' for t in title_terms)})
+
+    # Top up with a financial-context body query if we don't have enough hits.
+    if len(out) < 10:
+        anchor = f'"{short}"' if short else ticker
+        ctx = "(stock OR shares OR earnings OR revenue OR price OR analyst OR ticker)"
+        extra = await _query({"q": f"{anchor} AND {ctx}"})
+        seen = {a.get("url") for a in out}
+        out += [a for a in extra if a.get("url") not in seen]
+
+    # Last-resort broad fallback if still empty.
+    if not out:
+        body_terms = [t for t in (f'"{short}"' if short else "", ticker) if t]
+        if body_terms:
+            out = await _query({"q": " OR ".join(body_terms)})
+
     return out
 
 
@@ -104,13 +123,33 @@ async def _fetch_marketaux(ticker: str) -> list[dict[str, Any]]:
     return out
 
 
+_NOISE_DOMAIN_PARTS = ("pypi.org", "github.com", "rubygems.org", "npmjs.com", "crates.io")
+
+
 def _relevant(article: dict[str, Any], ticker: str, company_name: str | None) -> bool:
+    url = (article.get("url") or "").lower()
+    if any(p in url for p in _NOISE_DOMAIN_PARTS):
+        return False
+    # Marketaux already filtered to articles tagged with the TSLA entity —
+    # trust that signal even if the brand name isn't in title/description.
+    if article.get("provider") == "marketaux":
+        return True
     text = " ".join(filter(None, [article.get("title"), article.get("description")])).lower()
     if not text:
         return False
     if ticker.lower() in text:
         return True
-    return bool(company_name and company_name.lower().split()[0] in text)
+    if company_name:
+        # Strip corporate suffixes and trailing punctuation so the brand word
+        # ("tesla" not "tesla,") matches real article titles.
+        brand = company_name.split(",")[0].strip().lower()
+        for suffix in (" inc", " corp", " corporation", " co", " ltd", " plc"):
+            if brand.endswith(suffix):
+                brand = brand[: -len(suffix)].strip()
+        brand = brand.rstrip(".,;:")
+        if brand and brand in text:
+            return True
+    return False
 
 
 def _parse_published(s: str | None) -> datetime | None:

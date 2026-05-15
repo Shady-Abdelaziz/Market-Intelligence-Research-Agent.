@@ -1,7 +1,8 @@
 """LLM client — OpenRouter via the openai SDK.
 
-Implements function calling, streaming, prompt caching markers, and an
-automatic fallback chain (primary -> fallback) on 429/5xx errors.
+Implements function calling, streaming, and prompt caching markers. Runs
+exclusively against the configured primary model; failures propagate to
+the caller, which decides whether to degrade the report.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 from app.config import get_settings
 from app.llm.budget import JobBudget
-from app.llm.retries import get_model_chain
 from app.observability.logging import get_logger
 from app.observability.metrics import (
     llm_call_latency_seconds,
@@ -66,34 +66,27 @@ class LLMClient:
         temperature: float | None = None,
         response_format: dict | None = None,
     ) -> ChatCompletion:
-        """Non-streaming completion with automatic fallback chain on errors."""
-        chain = [model] if model else get_model_chain()
-        last_exc: Exception | None = None
-
-        for candidate in chain:
-            t0 = time.monotonic()
-            try:
-                resp: ChatCompletion = await self._client.chat.completions.create(
-                    model=candidate,
-                    messages=self._apply_cache_markers(messages, candidate),
-                    tools=tools,
-                    tool_choice=tool_choice,
-                    temperature=temperature
-                    if temperature is not None
-                    else self._settings.llm_temperature,
-                    max_tokens=self._settings.llm_max_tokens,
-                    response_format=response_format,
-                )
-                latency = time.monotonic() - t0
-                self._record_usage(resp, candidate, latency)
-                return resp
-            except Exception as e:  # noqa: BLE001 — wide because openai SDK errors vary
-                last_exc = e
-                log.warning("llm_call_failed", model=candidate, error=str(e))
-                continue
-
-        assert last_exc is not None
-        raise last_exc
+        """Non-streaming completion against the primary model."""
+        chosen = model or self._settings.llm_primary_model
+        t0 = time.monotonic()
+        try:
+            resp: ChatCompletion = await self._client.chat.completions.create(
+                model=chosen,
+                messages=self._apply_cache_markers(messages, chosen),
+                tools=tools,
+                tool_choice=tool_choice,
+                temperature=temperature
+                if temperature is not None
+                else self._settings.llm_temperature,
+                max_tokens=self._settings.llm_max_tokens,
+                response_format=response_format,
+            )
+            latency = time.monotonic() - t0
+            self._record_usage(resp, chosen, latency)
+            return resp
+        except Exception as e:  # noqa: BLE001 — openai SDK error variants
+            log.warning("llm_call_failed", model=chosen, error=str(e))
+            raise
 
     async def stream(
         self,

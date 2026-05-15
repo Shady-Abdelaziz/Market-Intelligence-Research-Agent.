@@ -1,0 +1,177 @@
+{
+  "info": {
+    "name": "M.I.R.A. — Market Intelligence & Research Agent",
+    "description": "All HTTP endpoints exposed by the M.I.R.A. backend. Set the {{base_url}} collection variable to your running instance (default http://localhost:8000). Suggested workflow: (1) POST /analyze → grab job_id, (2) GET /status/{job_id} until status='completed' OR open /status/{job_id}/stream for live SSE, (3) optionally POST /monitor_start to enable proactive monitoring on a ticker.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "base_url", "value": "http://localhost:8000", "type": "string"},
+    {"key": "job_id", "value": "", "type": "string"},
+    {"key": "ticker", "value": "TSLA", "type": "string"}
+  ],
+  "item": [
+    {
+      "name": "Ops",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "url": {"raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"]},
+            "description": "Liveness probe. Returns {\"status\":\"ok\"} as long as the process is running."
+          }
+        },
+        {
+          "name": "GET /ready",
+          "request": {
+            "method": "GET",
+            "url": {"raw": "{{base_url}}/ready", "host": ["{{base_url}}"], "path": ["ready"]},
+            "description": "Readiness probe. Returns 200 when DB and (if configured) Redis are reachable."
+          }
+        },
+        {
+          "name": "GET /metrics",
+          "request": {
+            "method": "GET",
+            "url": {"raw": "{{base_url}}/metrics", "host": ["{{base_url}}"], "path": ["metrics"]},
+            "description": "Prometheus exposition. Counters: mira_jobs_total, mira_tool_call_total, mira_llm_tokens_total, mira_monitor_triggers_total. Histograms: mira_job_duration_seconds, mira_tool_call_latency_seconds, mira_llm_call_latency_seconds."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analyze",
+      "item": [
+        {
+          "name": "POST /analyze (TSLA)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var json = pm.response.json();",
+                  "pm.test('returns 202 + job_id', function () {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(json.job_id).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('job_id', json.job_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Analyze the near-term prospects of Tesla, Inc. (TSLA).\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/analyze", "host": ["{{base_url}}"], "path": ["analyze"]},
+            "description": "Submit an analysis. Returns immediately with a job_id; the analysis runs on the worker. Rate-limited 10/minute per IP."
+          }
+        },
+        {
+          "name": "POST /analyze (unknown ticker)",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {"mode": "raw", "raw": "{\n  \"query\": \"Analyze ZZZZZ123 stock\"\n}"},
+            "url": {"raw": "{{base_url}}/analyze", "host": ["{{base_url}}"], "path": ["analyze"]},
+            "description": "Edge case: invalid ticker. The job completes with degraded=true, reason=TICKER_NOT_FOUND — no hallucinated report."
+          }
+        },
+        {
+          "name": "POST /analyze (natural language)",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {"mode": "raw", "raw": "{\n  \"query\": \"tell me about coca cola stock\"\n}"},
+            "url": {"raw": "{{base_url}}/analyze", "host": ["{{base_url}}"], "path": ["analyze"]},
+            "description": "No explicit ticker — the ticker_extractor falls back to the LLM, which resolves Coca-Cola → KO."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Status",
+      "item": [
+        {
+          "name": "GET /status/{job_id}",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/status/{{job_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["status", "{{job_id}}"]
+            },
+            "description": "Poll the job. Returns status (queued|running|completed|failed|interrupted), timestamps, per-job telemetry (prompt_tokens, completion_tokens, cost_usd, tool_calls_count, reflection_passes), and the full report once completed."
+          }
+        },
+        {
+          "name": "GET /status/{job_id}/stream (SSE)",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Accept", "value": "text/event-stream"}],
+            "url": {
+              "raw": "{{base_url}}/status/{{job_id}}/stream",
+              "host": ["{{base_url}}"],
+              "path": ["status", "{{job_id}}", "stream"]
+            },
+            "description": "Live SSE timeline. Events: ticker_resolved, planner_decision, tool_start, tool_end, reflection_thought, synthesis_token, done, error. Supports Last-Event-ID for reconnect."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Monitor",
+      "item": [
+        {
+          "name": "POST /monitor_start",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ticker\": \"{{ticker}}\",\n  \"cadence_seconds\": 86400,\n  \"peers\": [\"F\", \"GM\"]\n}"
+            },
+            "url": {"raw": "{{base_url}}/monitor_start", "host": ["{{base_url}}"], "path": ["monitor_start"]},
+            "description": "Register a ticker for proactive monitoring. Idempotent upsert by ticker. Computes baselines (30-day price mean/std + volume avg) immediately so the first tick has comparison data. Rate-limited 5/minute per IP."
+          }
+        },
+        {
+          "name": "GET /monitor",
+          "request": {
+            "method": "GET",
+            "url": {"raw": "{{base_url}}/monitor", "host": ["{{base_url}}"], "path": ["monitor"]},
+            "description": "List all active monitors with their current baselines."
+          }
+        },
+        {
+          "name": "GET /monitor/{ticker}/history",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/monitor/{{ticker}}/history",
+              "host": ["{{base_url}}"],
+              "path": ["monitor", "{{ticker}}", "history"]
+            },
+            "description": "All proactive-alert-tagged analyses for this ticker, newest first."
+          }
+        },
+        {
+          "name": "DELETE /monitor/{ticker}",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/monitor/{{ticker}}",
+              "host": ["{{base_url}}"],
+              "path": ["monitor", "{{ticker}}"]
+            },
+            "description": "Stop monitoring this ticker."
+          }
+        }
+      ]
+    }
+  ]
+}

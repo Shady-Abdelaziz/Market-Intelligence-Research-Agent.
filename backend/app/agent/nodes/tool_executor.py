@@ -102,7 +102,12 @@ def _trim_for_stream(name: str, data: Any) -> Any:
     if name == "edgar_filings":
         return {"filings": (data.get("filings") or [])[:5]}
     if name == "peer_fundamentals":
-        return {"peers": (data.get("peers") or [])[:5]}
+        # `peers` here is a {ticker: fundamentals} mapping, not a list — cap by
+        # picking the first 5 keys deterministically.
+        peers_map = data.get("peers") or {}
+        if isinstance(peers_map, dict):
+            return {"peers": {k: peers_map[k] for k in list(peers_map.keys())[:5]}}
+        return {"peers": peers_map[:5]}
     return data
 
 

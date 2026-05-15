@@ -8,17 +8,21 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from app.api.schemas import MonitorRecord, MonitorStartRequest
+from app.config import get_settings
 from app.monitoring.baselines import compute_baselines
 from app.observability.logging import get_logger
+from app.observability.ratelimit import limiter
 from app.persistence.db import get_session
 from app.persistence.repos import MonitorRepo
 
 router = APIRouter(tags=["monitor"])
 log = get_logger(__name__)
+_settings = get_settings()
 
 
 @router.post("/monitor_start")
-async def monitor_start(req: MonitorStartRequest, request: Request) -> dict[str, Any]:
+@limiter.limit(_settings.ratelimit_monitor)
+async def monitor_start(request: Request, req: MonitorStartRequest) -> dict[str, Any]:
     ticker = req.ticker.upper().strip()
     async with get_session() as session:
         target = await MonitorRepo(session).upsert(

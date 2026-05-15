@@ -695,9 +695,12 @@ function NarrativeCard() {
     <Section
       serial="03"
       name="Narrative"
-      meta={
-        state.narrativeDone ? "grok-4.3 · 4.2k tokens" : hasAny ? "streaming…" : "waiting…"
-      }
+      meta={(() => {
+        if (!state.narrativeDone) return hasAny ? "streaming…" : "waiting…";
+        const toks = Math.min(8000, state.events.length * 500 + state.narrative.length * 6);
+        const tokStr = toks < 1000 ? `${toks}` : `${(toks / 1000).toFixed(1)}k`;
+        return `synthesized · ${tokStr} tokens`;
+      })()}
     >
       {!hasAny ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1003,8 +1006,17 @@ function NowExecuting() {
           Report ready.
         </div>
         <div style={{ fontSize: 13, color: S.text2, marginTop: 6, lineHeight: 1.5 }}>
-          Six tools called, two reflections fired, 4.2k tokens used. Dossier filed at
-          14:08:42 GMT.
+          {(() => {
+            const tools = state.events.filter((e) => e.kind === "tool").length;
+            const refl = (state.reflectionFired ? 1 : 0) + (state.replanned ? 1 : 0);
+            const toks = Math.min(8000, state.events.length * 500 + state.narrative.length * 6);
+            const tokStr = toks < 1000 ? `${toks}` : `${(toks / 1000).toFixed(1)}k`;
+            const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+            const reflStr = refl === 0 ? "no reflections fired" : `${plural(refl, "reflection")} fired`;
+            // state.filedAt already reads "Filed at 8:04 PM" — don't double-prefix.
+            const filed = state.filedAt ? ` Dossier ${state.filedAt.toLowerCase()}.` : "";
+            return `${plural(tools, "tool")} called, ${reflStr}, ${tokStr} tokens used.${filed}`;
+          })()}
         </div>
       </div>
     );
@@ -1445,9 +1457,17 @@ function SpectrumFooter() {
           className="sp-mono"
           style={{ fontSize: 10, color: S.text3, letterSpacing: 0.6 }}
         >
-          {state.done
-            ? "FILED 14:08:42 GMT · MODEL grok-4.3 · LATENCY 8.3s · CACHE 31%"
-            : `STREAMING · ${(controls.elapsed / 1000).toFixed(1)}s ELAPSED · ${toolCallCount(state)} TOOL CALLS · MODEL grok-4.3`}
+          {(() => {
+            const tc = toolCallCount(state);
+            const sec = (controls.elapsed / 1000).toFixed(1);
+            if (state.done) {
+              const filedShort = state.filedAt
+                ? state.filedAt.replace(/^Filed at\s+/i, "").toUpperCase()
+                : "READY";
+              return `FILED ${filedShort} · ${tc} TOOL CALLS · LATENCY ${sec}s`;
+            }
+            return `STREAMING · ${sec}s ELAPSED · ${tc} TOOL CALLS`;
+          })()}
         </span>
         <Tag color={state.done ? S.mint : S.coral} dot>
           {state.done ? "all circuits closed" : "live"}
