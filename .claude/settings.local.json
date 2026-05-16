@@ -3,7 +3,9 @@
     "allow": [
       "Bash(cd \"C:/Users/Shady/Desktop/market analysis/Market-Intelligence-Research-Agent\" && sed -i 's/\\\\r$//' backend/entrypoint.sh && file backend/entrypoint.sh)",
       "Bash(docker compose *)",
-      "Bash(cd \"/home/user/Market-Intelligence-Research-Agent.\" && touch .env && docker compose config 2>&1 | grep -E '\\(healthcheck|condition|depends_on|api:|worker:\\)' | head -30; rm .env)"
+      "Bash(cd \"/home/user/Market-Intelligence-Research-Agent.\" && touch .env && docker compose config 2>&1 | grep -E '\\(healthcheck|condition|depends_on|api:|worker:\\)' | head -30; rm .env)",
+      "Bash(cp ../.env .env)",
+      "Bash(DATABASE_URL=\"sqlite+aiosqlite:///./bench.db\" REDIS_URL=\"\" python -m alembic upgrade head)"
     ]
   }
 }

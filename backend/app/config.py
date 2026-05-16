@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # LLM
     openrouter_api_key: str = ""
     llm_primary_model: str = "x-ai/grok-4.3"
+    llm_fallback_model: str = "deepseek/deepseek-v4-pro"
     llm_temperature: float = 0.2
     llm_max_tokens: int = 4096
     llm_request_timeout_seconds: int = 120
