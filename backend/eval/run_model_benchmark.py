@@ -250,7 +250,39 @@ async def main() -> int:
     REPORT.write_text(render_md(results))
     print(f"\nWrote {out_json}")
     print(f"Wrote {REPORT}")
+    pdf_path = _try_render_pdf(REPORT)
+    if pdf_path:
+        print(f"Wrote {pdf_path}")
     return 0
+
+
+def _try_render_pdf(md_path: Path) -> Path | None:
+    """Best-effort: render the Markdown report to PDF if weasyprint+markdown are installed."""
+    try:
+        import markdown as _md
+        from weasyprint import HTML
+    except ImportError:
+        print("(skipped PDF: pip install weasyprint markdown to enable)")
+        return None
+    html = _md.markdown(md_path.read_text(), extensions=["tables", "fenced_code"])
+    css = (
+        "@page { size: A4; margin: 1.5cm; }"
+        "body { font-family: -apple-system, BlinkMacSystemFont, Arial, sans-serif; "
+        "font-size: 10pt; color: #1a1a1a; line-height: 1.5; }"
+        "h1 { font-size: 22pt; border-bottom: 2px solid #333; padding-bottom: 6px; }"
+        "h2 { font-size: 14pt; margin-top: 20px; color: #222; }"
+        "h3 { font-size: 11pt; color: #444; margin-top: 14px; }"
+        "table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9pt; }"
+        "th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; }"
+        "th { background: #f0f0f0; font-weight: 600; }"
+        "code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9pt; "
+        "background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }"
+        "pre { background: #f4f4f4; padding: 8px; border-radius: 4px; font-size: 9pt; }"
+        "em { color: #666; }"
+    )
+    pdf_path = md_path.with_suffix(".pdf")
+    HTML(string=f"<style>{css}</style>{html}").write_pdf(str(pdf_path))
+    return pdf_path
 
 
 def render_md(results: dict) -> str:

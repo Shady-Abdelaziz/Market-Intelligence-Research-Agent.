@@ -138,6 +138,7 @@ A real validated report is at `sample_output.json` (passes `AnalysisReport.model
 | ≥3 documented test cases | 6 cases in `backend/eval/golden_cases.yaml` (AAPL self-correlation, unknown ticker, delisted LEHMQ, TSLA idiosyncratic, KO sector-correlated, MSFT basic) |
 | ½–1 page on measuring quality at scale | This README — *Evaluation strategy* section (7 layers from structural regression to drift detection) |
 | Property-based assertions on the schema | 33-test pytest suite (`backend/tests/`) — sentiment bounds, exactly-3 findings, alert-tag propagation, neutral-sentiment trigger logic, etc. |
+| **Model bake-off (bonus)** — GPT-5.4 vs Grok 4.3 vs DeepSeek V4 Pro, pass-rate + latency + token + cost per representative task | `backend/eval/run_model_benchmark.py` — results at [`docs/model_benchmark.md`](docs/model_benchmark.md) and [`docs/model_benchmark.pdf`](docs/model_benchmark.pdf) |
 
 ### §3E — Containerisation (advanced)
 
@@ -167,8 +168,8 @@ A real validated report is at `sample_output.json` (passes `AnalysisReport.model
 |---|---|---|
 | Web framework | FastAPI + Pydantic v2 + uvicorn | Async-native, Pydantic v2 has a Rust core, generates an OpenAPI schema for free |
 | Agent orchestration | **LangGraph** with `PostgresSaver` checkpointer | Reflection-as-conditional-edge is first-class; built-in event streaming maps cleanly to SSE; durable agent state across container restarts |
-| LLM primary | **`x-ai/grok-4.3`** via OpenRouter | #1 on Artificial Analysis agentic tool-calling leaderboard at time of build; $1.25/$2.50 per M tokens, 1M-token context, permanent reasoning. Drop-in via the OpenAI SDK with a different `base_url` |
-| LLM fallback | **`meta-llama/llama-3.3-70b-instruct:free`** | Free tier WITH function calling. We deliberately do **not** use `openai/gpt-oss-120b:free` because function calling is not supported on its free tier |
+| LLM primary | **`x-ai/grok-4.3`** via OpenRouter | Strong tool-calling, $1.25/$2.50 per M tokens, 1M-token context. Drop-in via the OpenAI SDK with a different `base_url`. Validated against GPT-5.4 and DeepSeek V4 Pro in [`docs/model_benchmark.md`](docs/model_benchmark.md) — Grok 4.3 is the best speed/cost balance for this workload (3/3 pass, p50 6.2 s, $0.006 per full run) |
+| LLM fallback | **`deepseek/deepseek-v4-pro`** | Cheapest option that still passes every benchmark task (3/3 pass, $0.00123 per full run — ~5× cheaper than primary). Supports function calling. Selected after the bake-off in `docs/model_benchmark.md` |
 | Sentiment classification | LLM-based (Grok) primary, Marketaux sentiment tags as cross-check | Avoids loading a local ML model (FinBERT/transformers/torch) in the container — keeps the image small, image RAM low, and the entire stack stateless from an inference perspective. See *Sentiment trade-off* below |
 | Queue | `arq` + Redis | Native asyncio, far less ceremony than Celery, cron built in |
 | Database | PostgreSQL (compose default) with SQLite/`aiosqlite` fallback for standalone `docker run` | Production-shaped; same ORM/migration code targets either via env-driven URL |
@@ -283,6 +284,16 @@ make eval     # LLM-as-judge harness against the real agent
 make lint     # ruff
 make typecheck # mypy
 ```
+
+### Model bake-off (GPT-5.4 vs Grok 4.3 vs DeepSeek V4 Pro)
+
+A standalone harness drives each model through three representative agent tasks (planner tool-call, news-sentiment classification, structured-JSON synthesis) and writes both Markdown and PDF reports — see [`docs/model_benchmark.md`](docs/model_benchmark.md) (and [`docs/model_benchmark.pdf`](docs/model_benchmark.pdf)). No DB or Redis needed.
+
+```bash
+cd backend && python -m eval.run_model_benchmark
+```
+
+Latest run: all three models pass 3/3; Grok 4.3 chosen as primary for speed/cost balance; DeepSeek V4 Pro chosen as fallback as the cheapest option that still passes every task.
 
 ### End-to-end browser tests (Playwright)
 
