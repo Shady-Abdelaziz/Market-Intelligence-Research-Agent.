@@ -97,9 +97,9 @@ function shortDate(s: string) {
 }
 
 const TRIGGER_DEFS = [
-  { trigger: "Sector ETF correlation > 0.95", threshold: "0.95", key: "sector_corr_high", action: "would fetch peer news + peer fundamentals" },
-  { trigger: "All news older than 72 h", threshold: "72 h", key: "news_stale", action: "would fetch SEC EDGAR filings" },
-  { trigger: "Neutral / evenly-split sentiment", threshold: "balanced", key: "sentiment_neutral", action: "would fetch SEC EDGAR filings" },
+  { trigger: "Sector ETF correlation > 0.95", threshold: "0.95", key: "sector_correlation", action: "would fetch peer news + peer fundamentals" },
+  { trigger: "All news older than 72 h", threshold: "72 h", key: "stale_news", action: "would fetch SEC EDGAR filings" },
+  { trigger: "Neutral / evenly-split sentiment", threshold: "balanced", key: "neutral_sentiment", action: "would fetch SEC EDGAR filings" },
 ];
 
 const DEGRADATION_COPY: Record<string, { headline: string; explainer: string; hint: string }> = {

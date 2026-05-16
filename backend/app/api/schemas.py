@@ -62,9 +62,9 @@ class CorrelationAnalysis(BaseModel):
 
 class ArticleSentiment(BaseModel):
     url: str
-    title: str
-    source: str
-    published_at: datetime
+    title: str | None = None
+    source: str | None = None
+    published_at: datetime | None = None
     sentiment: Literal["positive", "negative", "neutral"]
     sentiment_score: float
     rationale: str | None = None

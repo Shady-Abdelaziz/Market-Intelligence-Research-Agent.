@@ -27,10 +27,20 @@ export default function JobPage({ params }: { params: { id: string } }) {
         const data = (await getStatus(jobId)) as JobStatus;
         if (!alive) return;
         setJob(data);
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem("mira:last-job-id", jobId);
+        }
         if (data.status === "completed" || data.status === "failed") return;
       } catch (e: unknown) {
         if (!alive) return;
-        setErr(e instanceof Error ? e.message : "status fetch failed");
+        const msg = e instanceof Error ? e.message : "status fetch failed";
+        setErr(msg);
+        if (typeof window !== "undefined" && msg.includes("404")) {
+          const stored = window.localStorage.getItem("mira:last-job-id");
+          if (stored === jobId) {
+            window.localStorage.removeItem("mira:last-job-id");
+          }
+        }
       }
       timer = setTimeout(poll, 2000);
     }

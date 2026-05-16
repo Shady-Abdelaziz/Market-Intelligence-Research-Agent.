@@ -15,6 +15,7 @@ from typing import Any
 from app.agent.events import emit
 from app.agent.prompts import SYNTHESIZER_PROMPT, SYSTEM_PROMPT
 from app.agent.state import AgentState
+from app.agent.utils.dates import parse_published_at
 from app.api.schemas import (
     AnalysisReport,
     CorrelationAnalysis,
@@ -82,11 +83,9 @@ def _build_distribution(ns: dict[str, Any] | None) -> SentimentDistribution:
         articles=[
             {
                 "url": a["url"],
-                "title": a.get("title") or "",
-                "source": a.get("source") or "",
-                "published_at": datetime.fromisoformat(a["published_at"].replace("Z", "+00:00"))
-                if a.get("published_at")
-                else datetime.now(UTC),
+                "title": a.get("title"),
+                "source": a.get("source"),
+                "published_at": parse_published_at(a.get("published_at")),
                 "sentiment": a.get("sentiment", "neutral"),
                 "sentiment_score": float(a.get("sentiment_score", 0.0)),
                 "rationale": a.get("rationale"),
@@ -103,12 +102,11 @@ def _build_freshness(state: AgentState) -> DataFreshness:
     edgar = state.get("tool_results", {}).get("edgar_filings") or {}
     newest = None
     for a in ns.get("articles") or []:
-        try:
-            dt = datetime.fromisoformat((a.get("published_at") or "").replace("Z", "+00:00"))
-            if newest is None or dt > newest:
-                newest = dt
-        except Exception:
+        dt = parse_published_at(a.get("published_at"))
+        if dt is None:
             continue
+        if newest is None or dt > newest:
+            newest = dt
     edgar_dt = None
     filings = edgar.get("filings") or []
     if filings:

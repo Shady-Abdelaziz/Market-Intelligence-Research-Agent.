@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from app.api.schemas import (
     AnalysisReport,
+    ArticleSentiment,
     CorrelationAnalysis,
     DataFreshness,
     MarketSnapshot,
@@ -92,3 +93,28 @@ def test_proactive_alert_tag_and_monitor_trigger_propagate():
 def test_monitor_trigger_rejects_unknown_values():
     with pytest.raises(ValidationError):
         _minimal_report(monitor_trigger="not_a_real_trigger")
+
+
+def test_article_sentiment_allows_optional_metadata():
+    """News tool can return None for title/source/published_at; schema must accept it."""
+    a = ArticleSentiment(
+        url="https://example.com/x",
+        title=None,
+        source=None,
+        published_at=None,
+        sentiment="neutral",
+        sentiment_score=0.0,
+    )
+    assert a.title is None
+    assert a.source is None
+    assert a.published_at is None
+
+    dumped = a.model_dump(mode="json")
+    assert dumped["title"] is None
+    assert dumped["source"] is None
+    assert dumped["published_at"] is None
+
+    roundtrip = ArticleSentiment.model_validate(dumped)
+    assert roundtrip.title is None
+    assert roundtrip.source is None
+    assert roundtrip.published_at is None
