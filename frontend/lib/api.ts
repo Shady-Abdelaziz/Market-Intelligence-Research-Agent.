@@ -56,6 +56,25 @@ export async function deleteMonitor(ticker: string): Promise<void> {
   }
 }
 
+export type ResolvedItem = {
+  input: string;
+  status: "ok" | "corrected" | "invalid";
+  ticker?: string | null;
+  company_name?: string | null;
+  message?: string | null;
+};
+
+export async function resolveTickers(inputs: string[]): Promise<ResolvedItem[]> {
+  const r = await fetch(`${API_BASE}/resolve_tickers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ inputs }),
+  });
+  if (!r.ok) throw new Error(`resolve_tickers ${r.status}`);
+  const body = await r.json();
+  return body.results || [];
+}
+
 export async function monitorHistory(ticker: string): Promise<any[]> {
   const r = await fetch(`${API_BASE}/monitor/${ticker}/history`);
   return r.ok ? r.json() : [];

@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from app.api import analyze, monitor, ops, status
+from app.api import analyze, monitor, ops, resolve, status
 from app.cache.redis_cache import close_cache, init_cache
 from app.config import get_settings
 from app.observability.logging import configure_logging, get_logger, request_id_var
@@ -92,6 +92,7 @@ def create_app() -> FastAPI:
     app.include_router(analyze.router)
     app.include_router(status.router)
     app.include_router(monitor.router)
+    app.include_router(resolve.router)
     app.include_router(ops.router)
 
     return app
