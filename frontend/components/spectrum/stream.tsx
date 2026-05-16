@@ -87,6 +87,9 @@ export type StreamState = {
   // proactive monitoring metadata (set on monitor-fired analyses)
   alertTag: string | null;
   monitorTrigger: string | null;
+  // raw persisted report — populated once the backend job completes, used by
+  // detail cards (articles, tool breakdown, provenance, etc.)
+  report: Record<string, unknown> | null;
 };
 
 export const TIMELINE_INITIAL: StreamState = {
@@ -115,6 +118,7 @@ export const TIMELINE_INITIAL: StreamState = {
   failedReason: null,
   alertTag: null,
   monitorTrigger: null,
+  report: null,
 };
 
 const NARRATIVE_TEXT =
@@ -774,108 +778,91 @@ export function useRealAgentStream(
   });
   const startRef = useRef(performance.now());
   const [elapsed, setElapsed] = useState(0);
-  const synthBufRef = useRef<string>("");
-  const eventCountRef = useRef(0);
-  const stepStartRef = useRef<Record<string, number>>({});
 
-  const apply = useCallback((m: (s: StreamState) => StreamState) => setState(m), []);
-
-  // Tick elapsed for the controls progress bar
+  // Tick elapsed only while the job is still running. Freeze on done/failed.
   useEffect(() => {
+    if (state.done) return;
     const id = setInterval(() => {
       setElapsed(performance.now() - startRef.current);
-    }, 100);
+    }, 250);
     return () => clearInterval(id);
-  }, []);
+  }, [state.done]);
 
-  // Subscribe to SSE
+  // Poll /status/<id> until completed/failed, then hydrate from the persisted
+  // report. No SSE — we render a single "processing" state while running and
+  // the full report once it's ready.
   useEffect(() => {
     if (!jobId) return;
-    // Hydrate from the snapshot endpoint first (handles late navigation /
-    // page reloads where events have already been emitted)
     let cancelled = false;
-    void (async () => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = async () => {
       try {
         const r = await fetch(`${base}/status/${jobId}`);
-        if (!r.ok) return;
+        if (!r.ok) {
+          if (!cancelled) timer = setTimeout(poll, 2000);
+          return;
+        }
         const snap = await r.json();
         if (cancelled) return;
-        if (snap?.report) {
-          // Replay terminal state directly from the persisted report
-          apply((s) => mergeReportIntoState(s, snap.report));
-        } else if (snap?.query) {
-          apply((s) => ({ ...s, query: snap.query }));
+        if (snap?.status === "completed" && snap?.report) {
+          setState((s) =>
+            mergeReportIntoState(
+              { ...s, query: snap.query ?? s.query },
+              snap.report,
+            ),
+          );
+          return; // stop polling
+        }
+        if (snap?.status === "failed") {
+          setState((s) => ({
+            ...s,
+            done: true,
+            failed: true,
+            failedReason: (snap.error as string) ?? "failed",
+            narrativeDone: true,
+            query: snap.query ?? s.query,
+          }));
+          return;
+        }
+        if (snap?.query) {
+          setState((s) => (s.query ? s : { ...s, query: snap.query }));
         }
       } catch {
-        /* offline / 404 — let SSE drive the state */
+        /* network blip — try again */
       }
-    })();
-
-    const es = new EventSource(`${base}/status/${jobId}/stream`);
-    const types = [
-      "ticker_resolved",
-      "ticker_resolution_failed",
-      "planner_decision",
-      "tool_start",
-      "tool_end",
-      "reflection_thought",
-      "replan",
-      "synthesis_token",
-      "done",
-      "error",
-    ];
-
-    const handler = (type: string) => (ev: MessageEvent) => {
-      let data: Record<string, unknown> = {};
-      try {
-        data = JSON.parse(ev.data);
-      } catch {
-        return;
-      }
-      apply((s) => reduce(s, type, data, synthBufRef, eventCountRef, stepStartRef));
-      if (type === "done" || type === "error") {
-        es.close();
-      }
+      if (!cancelled) timer = setTimeout(poll, 2000);
     };
 
-    for (const t of types) es.addEventListener(t, handler(t) as EventListener);
-    es.onerror = () => {
-      /* EventSource auto-reconnects; if the backend isn't there we still show
-         whatever the snapshot fetch hydrated. */
-    };
-
+    void poll();
     return () => {
       cancelled = true;
-      es.close();
+      if (timer) clearTimeout(timer);
     };
-  }, [jobId, base, apply]);
+  }, [jobId, base]);
 
   const replay = useCallback(() => {
-    setState({
-      ...TIMELINE_INITIAL,
-      caseId: jobId ? `j-${jobId.slice(0, 6)}` : "",
-    });
-    synthBufRef.current = "";
-    eventCountRef.current = 0;
-    stepStartRef.current = {};
-    startRef.current = performance.now();
-    setElapsed(0);
-    // Re-fetch snapshot so the report comes back if it was already filed
-    if (jobId) {
-      void fetch(`${base}/status/${jobId}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((snap) => {
-          if (snap?.report) {
-            setState((s) => mergeReportIntoState(s, snap.report));
-          }
-        })
-        .catch(() => {});
-    }
+    if (!jobId) return;
+    void fetch(`${base}/status/${jobId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((snap) => {
+        if (snap?.report) {
+          setState({
+            ...TIMELINE_INITIAL,
+            caseId: `j-${jobId.slice(0, 6)}`,
+          });
+          // Apply on the next tick so React renders the reset first
+          setTimeout(
+            () => setState((s) => mergeReportIntoState(s, snap.report)),
+            50,
+          );
+        }
+      })
+      .catch(() => {});
   }, [jobId, base]);
 
   const togglePlay = useCallback(() => {
-    // Real streams can't be paused — the backend is shipping events live.
-    // No-op to keep the StreamControls UI consistent.
+    /* no-op — there's nothing to pause */
   }, []);
 
   return {
@@ -1099,9 +1086,74 @@ function mergeReportIntoState(
       })}`
     : s.filedAt;
 
+  // Reconstruct a timeline so the "Reasoning" panel and tool-count read
+  // correctly from the persisted report (we no longer get live events).
+  const toolInvocations = (report.tool_invocations as Array<{
+    name?: string;
+    input?: Record<string, unknown>;
+    output_summary?: string;
+    latency_ms?: number;
+    status?: string;
+  }>) ?? [];
+  const reflectionPasses = (report.reflection_passes as number) ?? 0;
+  const triggersFired = (report.triggers_fired as string[]) ?? [];
+  const events: TimelineEvent[] = [
+    {
+      kind: "plan",
+      title: `Plan · ${toolInvocations.length} tool${toolInvocations.length === 1 ? "" : "s"}`,
+      body: "extract ticker · decompose query",
+      dur: "—",
+    },
+    ...toolInvocations.map((inv) => ({
+      kind: "tool" as EventKind,
+      title: inv.name ?? "tool",
+      body: inv.output_summary ?? "",
+      dur:
+        inv.latency_ms != null
+          ? inv.latency_ms >= 1000
+            ? `${(inv.latency_ms / 1000).toFixed(2)}s`
+            : `${inv.latency_ms}ms`
+          : "—",
+    })),
+    ...(reflectionPasses > 0
+      ? [
+          {
+            kind: "reflect" as EventKind,
+            title: `critic · ${reflectionPasses} pass${reflectionPasses === 1 ? "" : "es"}`,
+            body: triggersFired.length
+              ? triggersFired.join(" · ")
+              : "no triggers fired",
+            dur: "—",
+            flag: triggersFired.length > 0,
+          },
+        ]
+      : []),
+    {
+      kind: "synth",
+      title: "synthesize report",
+      body: "composed structured report",
+      dur: "—",
+    },
+    {
+      kind: "done",
+      title: "Filed.",
+      body: (() => {
+        const tu = report.token_usage as
+          | { total_tokens?: number; cost_usd?: number }
+          | undefined;
+        const tokens = tu?.total_tokens ?? 0;
+        const cost = tu?.cost_usd ?? 0;
+        const tokStr = tokens < 1000 ? `${tokens}` : `${(tokens / 1000).toFixed(1)}k`;
+        return `${tokStr} tokens · $${cost.toFixed(4)}`;
+      })(),
+      dur: "—",
+    },
+  ];
+
   return {
     ...s,
     done: true,
+    events,
     ticker,
     companyName: name.endsWith(".") ? name : `${name}.`,
     sector: s.sector || (ms?.sector as string) || "",
@@ -1125,6 +1177,7 @@ function mergeReportIntoState(
     alertTag: (report.alert_tag as string | null) ?? s.alertTag,
     monitorTrigger:
       (report.monitor_trigger as string | null) ?? s.monitorTrigger,
+    report,
   };
 }
 

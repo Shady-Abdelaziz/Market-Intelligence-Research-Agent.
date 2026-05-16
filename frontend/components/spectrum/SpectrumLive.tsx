@@ -18,7 +18,6 @@ import {
 } from "./primitives";
 import type { EventKind } from "./primitives";
 import {
-  StreamControls,
   TIMELINE_INITIAL,
   useAgentStream,
   useRealAgentStream,
@@ -70,11 +69,18 @@ function toolCallCount(state: StreamState) {
 }
 
 export default function SpectrumLive({ jobId }: { jobId?: string } = {}) {
-  // When a jobId is provided we subscribe to the real backend SSE stream.
+  // When a jobId is provided we poll the backend for the persisted report.
   // Without one, fall back to the scripted Coca-Cola design preview.
   const real = useRealAgentStream(jobId ?? null);
   const demo = useAgentStream();
   const { state, controls } = jobId ? real : demo;
+
+  // For real jobs: while the backend is still working, render a clean
+  // "processing" screen instead of a half-populated dashboard.
+  if (jobId && !state.done) {
+    return <ProcessingScreen jobId={jobId} elapsed={controls.elapsed} query={state.query} />;
+  }
+
   return (
     <StreamCtx.Provider value={{ state, controls }}>
       <SpectrumGlobals />
@@ -132,7 +138,6 @@ export default function SpectrumLive({ jobId }: { jobId?: string } = {}) {
           <SpectrumFooter />
         </div>
       </div>
-      <StreamControls controls={controls} />
     </StreamCtx.Provider>
   );
 }
@@ -245,21 +250,15 @@ function SpectrumTopBar() {
             border: `1px solid ${S.border}`,
           }}
         >
-          <span style={{ color: S.text }}>${currentCost(state).toFixed(3)}</span>{" "}
-          <span style={{ color: S.text3 }}>/ $50.00</span>
-        </div>
-        <div
-          className="sp-mono"
-          style={{
-            fontSize: 11,
-            color: S.text2,
-            padding: "5px 10px",
-            background: S.surface,
-            borderRadius: 8,
-            border: `1px solid ${S.border}`,
-          }}
-        >
-          <span style={{ color: S.mint }}>●</span> {state.done ? "0" : "24"} / 8000 tk/s
+          <span style={{ color: S.text }}>
+            ${(() => {
+              const tu = state.report?.token_usage as Record<string, number> | undefined;
+              return typeof tu?.cost_usd === "number"
+                ? (tu.cost_usd as number).toFixed(4)
+                : currentCost(state).toFixed(4);
+            })()}
+          </span>{" "}
+          <span style={{ color: S.text3 }}>/ $0.05</span>
         </div>
         <span style={{ width: 1, height: 20, background: S.border, margin: "0 4px" }} />
         <div
@@ -502,14 +501,255 @@ function SkelStat({ label }: { label: string }) {
 }
 
 function SpectrumReport() {
+  const { state } = useStream();
   return (
     <main style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <DegradedBanner />
+      <ProvenanceCard />
       <MarketCard />
       <CorrelationCard />
       <NarrativeCard />
       <FindingsCard />
+      {state.report ? <ArticlesCard /> : null}
+      {state.report ? <ToolBreakdownCard /> : null}
       <CitationsCard />
     </main>
+  );
+}
+
+function DegradedBanner() {
+  const { state } = useStream();
+  const r = state.report;
+  if (!r || !r.degraded) return null;
+  const reason = (r.degradation_reason as string) ?? "Some data was unavailable.";
+  return (
+    <div
+      style={{
+        padding: "14px 18px",
+        background: S.amberSoft,
+        border: `1px solid ${S.amber}55`,
+        borderRadius: 12,
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+      }}
+    >
+      <Tag color={S.amber} solid>
+        Degraded
+      </Tag>
+      <span style={{ fontSize: 13, color: S.text, lineHeight: 1.5 }}>{reason}</span>
+    </div>
+  );
+}
+
+function ProvenanceCard() {
+  const { state } = useStream();
+  const r = state.report;
+  if (!r) return null;
+  const freshness = (r.data_freshness as Record<string, string | null> | null) ?? {};
+  const tu = (r.token_usage as Record<string, number | string> | null) ?? {};
+  const conf = (r.confidence as number | null) ?? null;
+  const fmtTime = (iso: string | null | undefined) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  };
+  const items = [
+    { label: "News freshness", value: fmtTime(freshness.newest_article_at as string | null) },
+    { label: "Market data at", value: fmtTime(freshness.market_data_at as string | null) },
+    { label: "EDGAR filing", value: fmtTime(freshness.edgar_filing_at as string | null) },
+    { label: "Confidence", value: conf != null ? conf.toFixed(2) : "—" },
+    { label: "Model", value: (tu.model as string) ?? "—" },
+    {
+      label: "Cost",
+      value:
+        typeof tu.cost_usd === "number"
+          ? `$${(tu.cost_usd as number).toFixed(4)}`
+          : "—",
+    },
+  ];
+  return (
+    <Section serial="00" name="Provenance" meta="signals · cost">
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, 1fr)",
+          gap: 14,
+        }}
+      >
+        {items.map((it) => (
+          <div
+            key={it.label}
+            style={{
+              padding: "12px 14px",
+              background: S.surfaceHi,
+              borderRadius: 10,
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+            }}
+          >
+            <Eyebrow>{it.label}</Eyebrow>
+            <span
+              className="sp-mono"
+              style={{ fontSize: 13, color: S.text, letterSpacing: -0.2 }}
+            >
+              {it.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+function ArticlesCard() {
+  const { state } = useStream();
+  const r = state.report;
+  const dist = (r?.sentiment_distribution as Record<string, unknown> | undefined) ?? {};
+  const articles = (dist.articles as Array<{
+    title?: string;
+    source?: string;
+    url?: string;
+    published_at?: string;
+    sentiment?: string;
+    sentiment_score?: number;
+    rationale?: string;
+  }>) ?? [];
+  if (!articles.length) return null;
+  const sentColor = (s?: string) =>
+    s === "positive" ? S.mint : s === "negative" ? S.rose : S.text3;
+  return (
+    <Section
+      serial="06"
+      name="Articles analyzed"
+      meta={`${articles.length} headline${articles.length === 1 ? "" : "s"} · per-article sentiment`}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {articles.map((a, i) => {
+          const sc = a.sentiment_score ?? 0;
+          const c = sentColor(a.sentiment);
+          return (
+            <div
+              key={(a.url ?? "") + i}
+              style={{
+                padding: "14px 16px",
+                background: S.surfaceHi,
+                borderLeft: `3px solid ${c}`,
+                borderRadius: 10,
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+              }}
+            >
+              <div style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+                <Tag color={c} solid>
+                  {a.sentiment ?? "neutral"}
+                </Tag>
+                <span
+                  className="sp-mono"
+                  style={{ fontSize: 11, color: S.text3 }}
+                >
+                  {(sc >= 0 ? "+" : "") + sc.toFixed(2)}
+                </span>
+                <span style={{ flex: 1 }} />
+                <span className="sp-mono" style={{ fontSize: 10, color: S.text3 }}>
+                  {a.source ?? "—"}
+                </span>
+              </div>
+              <a
+                href={a.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: S.text,
+                  lineHeight: 1.35,
+                  textDecoration: "none",
+                  letterSpacing: -0.2,
+                }}
+              >
+                {a.title ?? a.url ?? "untitled"}
+              </a>
+              {a.rationale ? (
+                <div style={{ fontSize: 12, color: S.text2, lineHeight: 1.5 }}>
+                  {a.rationale}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
+function ToolBreakdownCard() {
+  const { state } = useStream();
+  const r = state.report;
+  const invs = (r?.tool_invocations as Array<{
+    name?: string;
+    input?: Record<string, unknown>;
+    output_summary?: string;
+    latency_ms?: number;
+    status?: string;
+  }>) ?? [];
+  if (!invs.length) return null;
+  return (
+    <Section
+      serial="07"
+      name="Tools used"
+      meta={`${invs.length} invocation${invs.length === 1 ? "" : "s"}`}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {invs.map((inv, i) => {
+          const ok = (inv.status ?? "success") === "success";
+          return (
+            <div
+              key={i}
+              style={{
+                padding: "12px 14px",
+                background: S.surfaceHi,
+                borderRadius: 10,
+                display: "grid",
+                gridTemplateColumns: "auto 1fr auto",
+                gap: 14,
+                alignItems: "center",
+              }}
+            >
+              <Tag color={ok ? S.mint : S.rose} solid>
+                {inv.name ?? "tool"}
+              </Tag>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontSize: 13, color: S.text, lineHeight: 1.4 }}>
+                  {inv.output_summary ?? "—"}
+                </span>
+                {inv.input && Object.keys(inv.input).length ? (
+                  <span
+                    className="sp-mono"
+                    style={{ fontSize: 10, color: S.text3 }}
+                  >
+                    {JSON.stringify(inv.input)}
+                  </span>
+                ) : null}
+              </div>
+              <span
+                className="sp-mono"
+                style={{ fontSize: 11, color: S.text3, whiteSpace: "nowrap" }}
+              >
+                {inv.latency_ms != null
+                  ? inv.latency_ms >= 1000
+                    ? `${(inv.latency_ms / 1000).toFixed(2)}s`
+                    : `${inv.latency_ms}ms`
+                  : "—"}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </Section>
   );
 }
 
@@ -1327,32 +1567,46 @@ function EventRow({
 
 function BudgetMeter() {
   const { state } = useStream();
-  const tc = toolCallCount(state);
-  const cost = currentCost(state);
-  const tokens = Math.min(4200, state.events.length * 500 + state.narrative.length * 6);
+  const r = state.report;
+  const tu = (r?.token_usage as Record<string, number> | undefined) ?? {};
+  const realTokens = (tu.total_tokens as number) ?? null;
+  const realCost = (tu.cost_usd as number) ?? null;
+  const realTc = ((r?.tool_invocations as unknown[]) ?? []).length || null;
+
+  const tc = realTc ?? toolCallCount(state);
+  const cost = realCost ?? currentCost(state);
+  const tokens =
+    realTokens ?? Math.min(4200, state.events.length * 500 + state.narrative.length * 6);
+  const TOKEN_CAP = 8000;
+  const COST_CAP = 0.05;
+  const TOOL_CAP = 10;
   const pct = Math.round(
-    ((tokens / 8000 + cost / 0.04 + tc / 10) / 3) * 100
+    ((Math.min(1, tokens / TOKEN_CAP) +
+      Math.min(1, cost / COST_CAP) +
+      Math.min(1, tc / TOOL_CAP)) /
+      3) *
+      100,
   );
   const meters = [
     {
       label: "Tokens",
       used: tokens < 1000 ? String(tokens) : (tokens / 1000).toFixed(1) + "k",
-      cap: "8k",
-      pct: (tokens / 8000) * 100,
+      cap: `${TOKEN_CAP / 1000}k`,
+      pct: (tokens / TOKEN_CAP) * 100,
       color: S.azure,
     },
     {
       label: "Cost",
-      used: `$${cost.toFixed(3)}`,
-      cap: "$0.04",
-      pct: (cost / 0.04) * 100,
+      used: `$${cost.toFixed(4)}`,
+      cap: `$${COST_CAP.toFixed(2)}`,
+      pct: (cost / COST_CAP) * 100,
       color: S.coral,
     },
     {
       label: "Tool calls",
       used: String(tc),
-      cap: "10",
-      pct: (tc / 10) * 100,
+      cap: String(TOOL_CAP),
+      pct: (tc / TOOL_CAP) * 100,
       color: S.mint,
     },
   ];
@@ -1439,6 +1693,255 @@ function BudgetMeter() {
   );
 }
 
+function ProcessingScreen({
+  jobId,
+  elapsed,
+  query,
+}: {
+  jobId: string;
+  elapsed: number;
+  query: string;
+}) {
+  const sec = (elapsed / 1000).toFixed(1);
+  const steps = [
+    { label: "Plan", desc: "extract ticker · decompose query" },
+    { label: "Tools", desc: "market data · news · correlation · peers" },
+    { label: "Reflect", desc: "critic checks · re-plan if needed" },
+    { label: "Synthesize", desc: "compose structured report · 3 findings" },
+  ];
+  // Estimate which step we're roughly in by elapsed time. Real analyses take
+  // ~30-180s depending on tool latency. Pure UX cue — not exact.
+  const stepIdx = Math.min(3, Math.floor(elapsed / 25000));
+  return (
+    <>
+      <SpectrumGlobals />
+      <div
+        className="sp sp-page"
+        style={{
+          minHeight: "100vh",
+          background: S.bg,
+          position: "relative",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: -300,
+            right: -200,
+            width: 800,
+            height: 800,
+            background: `radial-gradient(circle, ${S.coralSoft} 0%, transparent 65%)`,
+            pointerEvents: "none",
+            zIndex: 0,
+            opacity: 0.6,
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            bottom: -400,
+            left: -200,
+            width: 700,
+            height: 700,
+            background: `radial-gradient(circle, ${S.violetSoft} 0%, transparent 65%)`,
+            pointerEvents: "none",
+            zIndex: 0,
+            opacity: 0.5,
+          }}
+        />
+
+        <header
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 24,
+            padding: "16px 40px",
+            borderBottom: `1px solid ${S.border}`,
+            backdropFilter: "blur(12px)",
+            background: "rgba(247,245,240,0.78)",
+            zIndex: 50,
+          }}
+        >
+          <a href="/" style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none", color: S.text }}>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 9,
+                background: `linear-gradient(135deg, ${S.coral} 0%, ${S.violet} 100%)`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: 14,
+              }}
+            >
+              ✦
+            </div>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: -0.2 }}>M.I.R.A.</div>
+              <div className="sp-mono" style={{ fontSize: 9, color: S.text3, letterSpacing: 0.6 }}>
+                v1.0 · grok-4.3
+              </div>
+            </div>
+          </a>
+          <div style={{ flex: 1 }} />
+          <Tag color={S.coral} dot>
+            <span
+              className="sp-pulse"
+              style={{
+                display: "inline-block",
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: S.coral,
+                marginRight: -2,
+              }}
+            />
+            processing
+          </Tag>
+        </header>
+
+        <div
+          style={{
+            position: "relative",
+            zIndex: 1,
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 40,
+          }}
+        >
+          <div
+            style={{
+              maxWidth: 720,
+              width: "100%",
+              padding: 40,
+              background: S.surface,
+              border: `1px solid ${S.border}`,
+              borderRadius: 20,
+              boxShadow: "0 20px 60px rgba(0,0,0,0.06)",
+            }}
+          >
+            <Eyebrow>Case j-{jobId.slice(0, 6)} · live</Eyebrow>
+            <div
+              style={{
+                fontSize: 38,
+                fontWeight: 600,
+                letterSpacing: "-0.03em",
+                lineHeight: 1.1,
+                color: S.text,
+                margin: "16px 0 10px",
+              }}
+            >
+              Analyzing…
+            </div>
+            {query ? (
+              <div
+                style={{
+                  fontSize: 15,
+                  color: S.text2,
+                  lineHeight: 1.55,
+                  padding: "14px 18px",
+                  background: S.surfaceHi,
+                  borderLeft: `3px solid ${S.coral}`,
+                  borderRadius: 8,
+                  marginBottom: 28,
+                }}
+              >
+                {query}
+              </div>
+            ) : (
+              <Skel w="80%" h={20} />
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 24 }}>
+              {steps.map((step, i) => {
+                const done = i < stepIdx;
+                const active = i === stepIdx;
+                const color = done ? S.mint : active ? S.coral : S.text4;
+                return (
+                  <div
+                    key={step.label}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "20px 1fr auto",
+                      gap: 14,
+                      alignItems: "center",
+                      padding: "12px 14px",
+                      background: active ? S.surfaceHi : "transparent",
+                      borderRadius: 10,
+                      transition: "background 200ms ease",
+                    }}
+                  >
+                    <span
+                      className={active ? "sp-pulse" : ""}
+                      style={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: "50%",
+                        background: done || active ? color : "transparent",
+                        border: `2px solid ${color}`,
+                        boxShadow: active ? `0 0 12px ${color}` : "none",
+                      }}
+                    />
+                    <div>
+                      <div
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 600,
+                          color: active ? S.text : done ? S.text2 : S.text3,
+                          letterSpacing: -0.1,
+                        }}
+                      >
+                        {step.label}
+                      </div>
+                      <div style={{ fontSize: 12, color: S.text3, marginTop: 2 }}>{step.desc}</div>
+                    </div>
+                    <span
+                      className="sp-mono"
+                      style={{
+                        fontSize: 10,
+                        color: done ? S.mint : S.text4,
+                        letterSpacing: 0.4,
+                      }}
+                    >
+                      {done ? "DONE" : active ? "RUNNING" : "QUEUED"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginTop: 28,
+                paddingTop: 18,
+                borderTop: `1px solid ${S.border}`,
+              }}
+            >
+              <span className="sp-mono" style={{ fontSize: 11, color: S.text3 }}>
+                ELAPSED {sec}s · typical 30–120s
+              </span>
+              <span className="sp-mono" style={{ fontSize: 11, color: S.text3 }}>
+                polling /status every 2s
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function SpectrumFooter() {
   const { state, controls } = useStream();
   return (
@@ -1477,10 +1980,40 @@ function SpectrumFooter() {
         <Btn ghost small onClick={controls.replay}>
           ↻ Replay run
         </Btn>
-        <Btn ghost small>
+        <Btn
+          ghost
+          small
+          onClick={() => {
+            if (!state.report) return;
+            const blob = new Blob([JSON.stringify(state.report, null, 2)], {
+              type: "application/json",
+            });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `mira-${state.ticker || "report"}-${Date.now()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }}
+        >
           Export JSON
         </Btn>
-        <Btn primary small iconRight={<span>→</span>}>
+        <Btn
+          primary
+          small
+          iconRight={<span>→</span>}
+          onClick={async () => {
+            const url = window.location.href;
+            try {
+              await navigator.clipboard.writeText(url);
+              alert("Dossier URL copied to clipboard");
+            } catch {
+              window.prompt("Copy the dossier URL:", url);
+            }
+          }}
+        >
           Share dossier
         </Btn>
       </div>

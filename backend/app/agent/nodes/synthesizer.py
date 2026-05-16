@@ -155,7 +155,7 @@ async def run(state: AgentState, llm_factory, budget: JobBudget) -> AgentState:
     if not state.get("ticker"):
         # Emit a degraded report directly
         report = _make_degraded_report(state)
-        await emit(job_id, "done", {"report": report.model_dump(mode="json")})
+        await emit(job_id, "done", {"job_id": job_id})
         return {**state, "report": report.model_dump(mode="json")}
 
     # Build deterministic components from tool results
@@ -274,7 +274,7 @@ async def run(state: AgentState, llm_factory, budget: JobBudget) -> AgentState:
     )
 
     dumped = report.model_dump(mode="json")
-    await emit(job_id, "done", {"report": dumped})
+    await emit(job_id, "done", {"job_id": job_id})
     return {**state, "report": dumped}
 
 

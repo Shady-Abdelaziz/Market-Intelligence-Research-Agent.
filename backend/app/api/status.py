@@ -26,6 +26,7 @@ async def get_status(job_id: str) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail="job_not_found")
         out: dict[str, Any] = {
             "job_id": str(job.id),
+            "query": job.query,
             "status": job.status,
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "started_at": job.started_at.isoformat() if job.started_at else None,
