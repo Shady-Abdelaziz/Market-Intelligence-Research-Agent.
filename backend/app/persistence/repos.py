@@ -6,13 +6,21 @@ rather than leaking raw queries to callers.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from collections import defaultdict
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Per-process locks keyed by monitor target id. Used to serialize the
+# read-merge-write on the monitor URL history within a single worker
+# process (standalone / single-process deployments). Cross-process
+# correctness on Postgres is handled by SELECT ... FOR UPDATE.
+_MONITOR_TARGET_LOCKS: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 from app.persistence.models import (
     AgentEvent,
@@ -139,6 +147,71 @@ class MonitorRepo:
             select(MonitoringTarget).where(MonitoringTarget.active.is_(True))
         )
         return list(result.scalars().all())
+
+    async def merge_seen_urls_and_update_baselines(
+        self,
+        target_id: uuid.UUID | str,
+        new_url_hashes: list[str],
+        baseline_price_mean: float,
+        baseline_price_std: float,
+        baseline_volume_avg: float,
+        cap: int = 50,
+    ) -> list[str]:
+        """Atomically merge new article-url hashes into last_seen_article_urls
+        and update baseline numbers in the same transaction.
+
+        Race-safe: on Postgres we acquire a row-level lock via
+        ``SELECT ... FOR UPDATE`` before reading the existing list, so two
+        concurrent monitor ticks against the same target serialize on this
+        row. On SQLite the engine already serializes writes within a single
+        connection / database file, so the read+write inside one session
+        is effectively atomic.
+
+        Returns the merged list that was written (useful for assertions
+        and observability).
+        """
+        from app.config import get_settings
+
+        settings = get_settings()
+
+        # Single-process serialization. The per-target asyncio.Lock makes
+        # two concurrent ticks against the same monitor row wait their
+        # turn within one worker process — necessary on SQLite (separate
+        # aiosqlite connections per session can interleave read/write
+        # phases and clobber history) and harmless on Postgres (where the
+        # SELECT ... FOR UPDATE below is the cross-process guarantee).
+        async with _MONITOR_TARGET_LOCKS[str(target_id)]:
+            if settings.is_sqlite:
+                result = await self.session.execute(
+                    select(MonitoringTarget).where(MonitoringTarget.id == target_id)
+                )
+            else:
+                result = await self.session.execute(
+                    select(MonitoringTarget)
+                    .where(MonitoringTarget.id == target_id)
+                    .with_for_update()
+                )
+            target = result.scalar_one_or_none()
+            if target is None:
+                return []
+            base = list(target.last_seen_article_urls or [])
+            # Preserve first-seen ordering, dedupe, cap to the most-recent `cap`.
+            merged = list(dict.fromkeys(base + list(new_url_hashes)))[-cap:]
+
+            await self.session.execute(
+                update(MonitoringTarget)
+                .where(MonitoringTarget.id == target_id)
+                .values(
+                    baseline_price_mean=Decimal(str(baseline_price_mean)),
+                    baseline_price_std=Decimal(str(baseline_price_std)),
+                    baseline_volume_avg=Decimal(str(baseline_volume_avg)),
+                    baselines_computed_at=_now_utc(),
+                    last_run_at=_now_utc(),
+                    last_seen_article_urls=merged,
+                )
+            )
+            await self.session.commit()
+            return merged
 
     async def update_baselines_and_run(
         self,

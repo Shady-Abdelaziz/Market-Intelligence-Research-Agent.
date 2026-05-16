@@ -28,12 +28,11 @@ async def analyze(request: Request, req: AnalyzeRequest) -> AnalyzeResponse:
     if pool is not None:
         await pool.enqueue_job("analyze_ticker", job_id, _queue_name="mira_jobs")
     else:
-        # Standalone fallback: run inline
-        import asyncio
+        # Standalone fallback: supervised background task that guarantees
+        # terminal state + a `done`/`error` SSE even if the worker crashes.
+        from app.workers.jobs import spawn_inline_job
 
-        from app.workers.jobs import analyze_ticker
-
-        asyncio.create_task(analyze_ticker({}, job_id))
+        spawn_inline_job(job_id)
 
     log.info("job_enqueued", job_id=job_id)
     return AnalyzeResponse(job_id=job_id, status="queued")

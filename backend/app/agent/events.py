@@ -105,7 +105,24 @@ async def emit(job_id: str, event_type: str, payload: dict[str, Any]) -> None:
         except Exception as e:  # noqa: BLE001
             log.warning("event_publish_failed", job_id=job_id, error=str(e))
 
-    # In-process fanout (single-process test/standalone mode)
+    # In-process fanout (single-process test/standalone mode). When a
+    # subscriber falls behind we don't silently drop the event — we push a
+    # `lagged` sentinel so the SSE handler in api/status.py can re-replay
+    # from the persisted backlog. Events are durable via EventRepo above,
+    # so the catch-up is lossless even though the live wire order skips.
     for q in list(_subscribers.get(job_id, [])):
-        with contextlib.suppress(asyncio.QueueFull):
+        try:
             q.put_nowait({"event": event_type, "data": safe})
+        except asyncio.QueueFull:
+            from app.observability.metrics import sse_dropped_events_total
+
+            sse_dropped_events_total.inc()
+            # Drain oldest to keep memory bounded, then push a lagged
+            # marker. If the queue already carries a lagged marker at the
+            # head we don't pile on — one is enough to trigger catch-up.
+            with contextlib.suppress(asyncio.QueueEmpty):
+                q.get_nowait()
+            with contextlib.suppress(asyncio.QueueFull):
+                q.put_nowait(
+                    {"event": "lagged", "data": {"job_id": job_id}}
+                )

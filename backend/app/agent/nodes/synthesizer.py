@@ -182,6 +182,13 @@ async def run(state: AgentState, llm_factory, budget: JobBudget) -> AgentState:
             k: state["tool_results"][k] for k in state.get("tool_results", {})
         },
         "triggers_fired": state.get("triggers_fired", []),
+        # Surface partial-data state to the LLM so it can caveat the
+        # narrative when one or more tools failed (timeout, network error,
+        # budget exhaustion, delisting). The stub-report fast path is
+        # still gated on missing-ticker only — we don't degrade prose
+        # quality on the happy path.
+        "degraded": bool(state.get("degraded")),
+        "degradation_reason": state.get("degradation_reason"),
     }
 
     synthesis: dict[str, Any] | None = None
