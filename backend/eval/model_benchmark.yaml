@@ -1,0 +1,15 @@
+# Models compared in the bake-off. IDs are exact OpenRouter slugs (verified
+# via GET /api/v1/models on 2026-05-16). All three support tool calling.
+models:
+  - id: openai/gpt-5.4
+    display: GPT-5.4
+  - id: x-ai/grok-4.3
+    display: Grok 4.3
+  - id: deepseek/deepseek-v4-pro
+    display: DeepSeek V4 Pro
+
+# Runs per case per model (>1 averages stochastic latency / tool-call paths).
+runs_per_case: 1
+
+# Cases to drive — references golden_cases.yaml by name. Empty = all.
+cases: []
