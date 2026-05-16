@@ -10,6 +10,7 @@ from app.api.schemas import (
     ArticleSentiment,
     CorrelationAnalysis,
     DataFreshness,
+    ExtendedAnalysis,
     MarketSnapshot,
     MonitorStartRequest,
     SentimentDistribution,
@@ -152,3 +153,29 @@ def test_article_sentiment_allows_optional_metadata():
     assert roundtrip.title is None
     assert roundtrip.source is None
     assert roundtrip.published_at is None
+
+
+def test_extended_analysis_coerces_null_arrays_to_empty():
+    """LLMs sometimes emit `null` for empty arrays even though the prompt
+    asks for `[]`. A bare list[str] field would raise ValidationError and
+    trigger the synthesizer's re-prompt loop. The field_validator coerces
+    None -> [] so a stray null doesn't silently degrade an otherwise-fine
+    report."""
+    ea = ExtendedAnalysis.model_validate(
+        {"catalysts": None, "risks": None, "bull_case": "x"}
+    )
+    assert ea.catalysts == []
+    assert ea.risks == []
+    assert ea.bull_case == "x"
+
+
+def test_analysis_report_nested_extended_analysis_null_arrays():
+    """The coercion holds when ExtendedAnalysis is parsed recursively
+    via AnalysisReport (the path the synthesizer actually walks)."""
+    r = _minimal_report(
+        extended_analysis={"catalysts": None, "risks": None, "valuation_context": "neutral"}
+    )
+    assert r.extended_analysis is not None
+    assert r.extended_analysis.catalysts == []
+    assert r.extended_analysis.risks == []
+    assert r.extended_analysis.valuation_context == "neutral"

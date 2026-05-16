@@ -120,6 +120,14 @@ class ExtendedAnalysis(BaseModel):
     risks: list[str] = Field(default_factory=list)
     valuation_context: str | None = None
 
+    @field_validator("catalysts", "risks", mode="before")
+    @classmethod
+    def _none_to_empty_list(cls, v: list[str] | None) -> list[str]:
+        # LLMs occasionally emit `null` for empty arrays despite the prompt.
+        # Coerce to [] so a stray null doesn't trigger the synthesizer's
+        # one-shot re-prompt and silently degrade an otherwise-fine report.
+        return [] if v is None else v
+
 
 class AnalysisReport(BaseModel):
     model_config = ConfigDict(json_schema_extra={"title": "M.I.R.A. Analysis Report"})
