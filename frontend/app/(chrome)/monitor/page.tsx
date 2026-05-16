@@ -1,12 +1,12 @@
 "use client";
-import { useEffect, useState } from "react";
+
+import { useEffect, useMemo, useState } from "react";
 import {
   deleteMonitor,
   listMonitors,
   monitorHistory,
   postMonitorStart,
 } from "@/lib/api";
-import { Btn, Eyebrow, S, Tag } from "@/components/spectrum/primitives";
 
 interface Monitor {
   id: string;
@@ -24,30 +24,41 @@ interface HistoryEntry {
   job_id: string;
   created_at: string;
   triggers_fired?: string[];
+  alert_tag?: string | null;
+  report?: any;
 }
 
-const TRIGGERS = [
-  { label: "≥5 new articles", c: S.azure },
-  { label: "Price > 2σ move", c: S.coral },
-  { label: "Volume > 2× avg", c: S.violet },
-];
+type FilterKey = "all" | "alert" | "watching" | "quiet";
 
-export default function MonitorPage() {
+function statusOf(m: Monitor, history: HistoryEntry[] | undefined): FilterKey {
+  if (history && history.some((h) => (h.triggers_fired || []).length > 0)) return "alert";
+  if (m.baseline_price_mean == null) return "quiet";
+  return "watching";
+}
+
+function fmtPct(v: number) {
+  return (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+}
+
+export default function MonitorsView() {
   const [monitors, setMonitors] = useState<Monitor[]>([]);
-  const [ticker, setTicker] = useState("");
-  const [cadence, setCadence] = useState(86400);
-  const [peers, setPeers] = useState("");
   const [history, setHistory] = useState<Record<string, HistoryEntry[]>>({});
-  const [err, setErr] = useState<string | null>(null);
+  const [filter, setFilter] = useState<FilterKey>("all");
+  const [form, setForm] = useState({ ticker: "", peers: "", cadence: "86400" });
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   async function refresh() {
     try {
-      const data = await listMonitors();
-      setMonitors(data as Monitor[]);
+      const data = (await listMonitors()) as Monitor[];
+      setMonitors(data);
+      // Fetch history per monitor in parallel
+      const all = await Promise.all(
+        data.map(async (m) => [m.ticker, await monitorHistory(m.ticker)] as const),
+      );
+      setHistory(Object.fromEntries(all) as Record<string, HistoryEntry[]>);
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Failed to list monitors";
-      setErr(msg);
+      setErr(e instanceof Error ? e.message : "Failed to list monitors");
     }
   }
 
@@ -57,26 +68,21 @@ export default function MonitorPage() {
 
   async function add() {
     setErr(null);
-    if (!ticker.trim()) {
+    if (!form.ticker.trim()) {
       setErr("Ticker required");
       return;
     }
     setBusy(true);
     try {
       await postMonitorStart(
-        ticker.toUpperCase(),
-        cadence,
-        peers
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
+        form.ticker.toUpperCase(),
+        parseInt(form.cadence) || 86400,
+        form.peers.split(",").map((s) => s.trim()).filter(Boolean),
       );
-      setTicker("");
-      setPeers("");
+      setForm({ ticker: "", peers: "", cadence: form.cadence });
       await refresh();
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "failed";
-      setErr(msg);
+      setErr(e instanceof Error ? e.message : "failed");
     } finally {
       setBusy(false);
     }
@@ -87,414 +93,242 @@ export default function MonitorPage() {
     await refresh();
   }
 
-  async function loadHistory(t: string) {
-    setHistory((h) => ({ ...h, [t]: [] }));
-    const rows = await monitorHistory(t);
-    setHistory((h) => ({ ...h, [t]: rows as HistoryEntry[] }));
-  }
+  const counts = useMemo(() => {
+    const c: Record<FilterKey, number> = { all: monitors.length, alert: 0, watching: 0, quiet: 0 };
+    for (const m of monitors) {
+      const s = statusOf(m, history[m.ticker]);
+      c[s]++;
+    }
+    return c;
+  }, [monitors, history]);
+
+  const list = monitors.filter((m) => filter === "all" || statusOf(m, history[m.ticker]) === filter);
+  const trippedToday = monitors.filter((m) => {
+    const h = history[m.ticker];
+    if (!h || !h.length) return false;
+    const newest = h[0];
+    if (!newest?.created_at) return false;
+    return (
+      (newest.triggers_fired || []).length > 0 &&
+      Date.now() - new Date(newest.created_at).getTime() < 24 * 3600 * 1000
+    );
+  }).length;
+  const alerts30d = monitors.reduce((s, m) => {
+    const h = history[m.ticker] || [];
+    return (
+      s +
+      h.filter((r) => {
+        if (!r.created_at) return false;
+        return (
+          (r.triggers_fired || []).length > 0 &&
+          Date.now() - new Date(r.created_at).getTime() < 30 * 86400 * 1000
+        );
+      }).length
+    );
+  }, 0);
 
   return (
-    <div style={{ padding: "0 40px 80px" }}>
-      <section style={{ padding: "56px 0 36px", maxWidth: 1100 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            marginBottom: 18,
-            flexWrap: "wrap",
-          }}
-        >
-          <Eyebrow>Persistent monitors</Eyebrow>
-          <span style={{ color: S.text4 }}>·</span>
-          <Tag color={S.coral}>cron · trading days</Tag>
+    <main className="container">
+      <header className="mon-head">
+        <div>
+          <div className="eyebrow">Persistent monitoring · trading-day cadence</div>
+          <h1>Standing watch.</h1>
+          <p>
+            MIRA ticks each ticker at the open, computes 30-day baselines, and fires a proactive
+            analysis when articles, price, or volume break out.
+          </p>
         </div>
+        <div className="mon-stats">
+          <div className="mon-stat">
+            <div className="v">{counts.all}</div>
+            <div className="k">Under watch</div>
+          </div>
+          <div className="mon-stat">
+            <div className={"v " + (trippedToday > 0 ? "alert" : "")}>{trippedToday}</div>
+            <div className="k">Tripped today</div>
+          </div>
+          <div className="mon-stat">
+            <div className="v">{alerts30d}</div>
+            <div className="k">Alerts · 30 d</div>
+          </div>
+        </div>
+      </header>
 
-        <h1
-          className="sp-h1"
-          style={{
-            fontSize: "clamp(40px, 6vw, 72px)",
-            fontWeight: 600,
-            letterSpacing: "-0.035em",
-            lineHeight: 1.0,
-            margin: 0,
-          }}
-        >
-          Watch tickers. Re-run on signal.
-        </h1>
+      <div className="filter-row">
+        {(["all", "alert", "watching", "quiet"] as FilterKey[]).map((f) => (
+          <button
+            key={f}
+            className={"filter " + (filter === f ? "active" : "")}
+            onClick={() => setFilter(f)}
+          >
+            {f[0].toUpperCase() + f.slice(1)} <span className="count">{counts[f]}</span>
+          </button>
+        ))}
+      </div>
 
-        <p
-          style={{
-            marginTop: 18,
-            maxWidth: 720,
-            fontSize: 17,
-            lineHeight: 1.5,
-            color: S.text2,
-          }}
-        >
-          M.I.R.A. wakes on a cadence (default 24h, trading days only) and only
-          spends tokens on a fresh analysis if something material has changed
-          since the last run.
-        </p>
+      {monitors.length === 0 ? (
+        <div className="card" style={{ padding: 36, textAlign: "center", color: "var(--muted)" }}>
+          <div className="eyebrow" style={{ marginBottom: 10 }}>no active monitors</div>
+          <div>Add a ticker below to begin proactive monitoring.</div>
+        </div>
+      ) : (
+        <div className="monitor-list">
+          {list.map((m) => {
+            const h = history[m.ticker] || [];
+            const newest = h[0];
+            const trigs = (newest?.triggers_fired || []) as string[];
+            const status = statusOf(m, h);
+            const report = newest?.report || null;
+            const price = report?.market_snapshot?.price as number | undefined;
+            const pct = report?.market_snapshot?.daily_change_pct as number | undefined;
+            const vol = report?.market_snapshot?.volume as number | undefined;
+            const sigma =
+              price != null && m.baseline_price_mean != null && m.baseline_price_std
+                ? ((price - m.baseline_price_mean) / m.baseline_price_std).toFixed(2)
+                : "—";
+            const volX =
+              vol != null && m.baseline_volume_avg ? (vol / m.baseline_volume_avg).toFixed(2) : "—";
+            const alertCount = h.filter((r) => (r.triggers_fired || []).length > 0).length;
+            return (
+              <div className="monitor-row" key={m.ticker}>
+                <div className="mr-tick">
+                  <div className="sym">{m.ticker}</div>
+                  <div className="co">{report?.company_name || "—"}</div>
+                </div>
+                <div className="mr-status">
+                  <span className={"mr-badge " + status}>
+                    <span className="d" />
+                    {status === "alert" ? "Alert today" : status === "watching" ? "Watching" : "Quiet"}
+                  </span>
+                  <div style={{ marginTop: 8 }}>
+                    {price != null ? (
+                      <>
+                        <span className="price">${price.toFixed(2)}</span>
+                        {pct != null && (
+                          <span className={"pct " + (pct >= 0 ? "up" : "down")}>{fmtPct(pct)}</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="mono" style={{ color: "var(--muted)", fontSize: 12 }}>
+                        awaiting first tick
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="trigs">
+                  <div className={"trig " + (trigs.includes("articles") ? "fired" : "")}>
+                    <div className="lbl">Articles</div>
+                    <div className="val">{trigs.includes("articles") ? "≥5" : "—"}</div>
+                  </div>
+                  <div className={"trig " + (trigs.includes("price_2sigma") ? "fired" : "")}>
+                    <div className="lbl">Price σ</div>
+                    <div className="val">{sigma}σ</div>
+                  </div>
+                  <div className={"trig " + (trigs.includes("volume_2x") ? "fired" : "")}>
+                    <div className="lbl">Volume</div>
+                    <div className="val">{volX === "—" ? "—" : volX + "×"}</div>
+                  </div>
+                </div>
+                <div className="mr-meta">
+                  <div>
+                    <span className="k">PEERS</span> &nbsp;{(m.peers || []).join(", ") || "—"}
+                  </div>
+                  <div>
+                    <span className="k">CADENCE</span> &nbsp;
+                    {(m.cadence_seconds / 3600).toFixed(0)}h · trading days
+                  </div>
+                  <div>
+                    <span className="k">LAST RUN</span> &nbsp;
+                    {m.last_run_at ? new Date(m.last_run_at).toLocaleString() : "—"}
+                  </div>
+                </div>
+                <div className="mr-alerts">
+                  <div className={"n " + (alertCount ? "has" : "zero")}>{alertCount}</div>
+                  <div className="k">Alerts · history</div>
+                  <div className="mr-actions">
+                    {newest?.job_id && <a href={`/jobs/${newest.job_id}`}>view</a>}
+                    <button className="danger" onClick={() => remove(m.ticker)}>
+                      stop
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            marginTop: 22,
-            flexWrap: "wrap",
-          }}
-        >
-          {TRIGGERS.map((t) => (
-            <Tag key={t.label} color={t.c} dot>
-              {t.label}
-            </Tag>
+      <section className="section">
+        <header className="section-head">
+          <span className="num">Trigger rules</span>
+          <h2>What wakes MIRA up.</h2>
+          <p>Any one of three conditions, evaluated on every tick. NYSE trading-day calendar gates execution.</p>
+        </header>
+        <div className="legend-grid">
+          {[
+            { name: "≥ 5 new articles", rule: "Articles seen since last tick ≥ 5", icon: "A" },
+            { name: "Price > 2σ from baseline", rule: "|close − 30 d mean| > 2 × 30 d std", icon: "σ" },
+            { name: "Volume > 2× baseline", rule: "Volume > 2 × 30 d average volume", icon: "V" },
+          ].map((t) => (
+            <div key={t.name}>
+              <div className="icon">{t.icon}</div>
+              <div className="name">{t.name}</div>
+              <div className="rule">{t.rule}</div>
+            </div>
           ))}
         </div>
       </section>
 
-      <section
-        style={{
-          marginBottom: 40,
-          background: S.surface,
-          border: `1px solid ${S.border}`,
-          borderLeft: `3px solid ${S.violet}`,
-          borderRadius: 14,
-          padding: 22,
-        }}
-      >
-        <Eyebrow serial="01" style={{ marginBottom: 14 }}>
-          Add monitor
-        </Eyebrow>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "120px 160px 1fr auto",
-            gap: 12,
-            alignItems: "end",
-          }}
-        >
-          <Field label="Ticker">
+      <section className="add">
+        <div className="title">Add a new watch.</div>
+        <div className="desc">POST /monitor_start · per-ticker cron, persisted across restarts.</div>
+        <div className="row">
+          <div className="field">
+            <label>Ticker</label>
             <input
-              value={ticker}
-              onChange={(e) => setTicker(e.target.value)}
+              value={form.ticker}
+              onChange={(e) => setForm({ ...form, ticker: e.target.value.toUpperCase() })}
               placeholder="AAPL"
-              style={inputStyle}
             />
-          </Field>
-          <Field label="Cadence (sec)">
+          </div>
+          <div className="field">
+            <label>Peers (comma-separated)</label>
             <input
-              type="number"
-              value={cadence}
-              onChange={(e) => setCadence(parseInt(e.target.value) || 0)}
-              style={inputStyle}
-            />
-          </Field>
-          <Field label="Peers (comma)">
-            <input
-              value={peers}
-              onChange={(e) => setPeers(e.target.value)}
+              value={form.peers}
+              onChange={(e) => setForm({ ...form, peers: e.target.value })}
               placeholder="MSFT, GOOGL"
-              style={inputStyle}
             />
-          </Field>
-          <Btn
-            primary
-            onClick={add}
-            disabled={busy || !ticker.trim()}
-            iconRight={<span>→</span>}
-            style={{
-              opacity: busy || !ticker.trim() ? 0.5 : 1,
-              cursor: busy || !ticker.trim() ? "not-allowed" : "pointer",
-            }}
-          >
-            {busy ? "Adding…" : "Start"}
-          </Btn>
+          </div>
+          <div className="field">
+            <label>Cadence</label>
+            <select
+              value={form.cadence}
+              onChange={(e) => setForm({ ...form, cadence: e.target.value })}
+            >
+              <option value="3600">1 hour</option>
+              <option value="14400">4 hours</option>
+              <option value="86400">24 hours · trading days</option>
+              <option value="604800">Weekly</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>Calendar</label>
+            <select defaultValue="nyse">
+              <option value="nyse">NYSE trading days</option>
+              <option value="nasdaq">NASDAQ trading days</option>
+              <option value="247">24/7</option>
+            </select>
+          </div>
+          <button className="btn" disabled={busy || !form.ticker.trim()} onClick={add}>
+            {busy ? "Adding…" : "Start watching"}
+          </button>
         </div>
         {err && (
-          <div
-            className="sp-mono"
-            style={{ fontSize: 11, color: S.rose, marginTop: 10 }}
-          >
+          <div className="mono" style={{ color: "var(--neg)", marginTop: 10, fontSize: 11 }}>
             {err}
           </div>
         )}
       </section>
-
-      <section>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            gap: 14,
-            marginBottom: 18,
-          }}
-        >
-          <Eyebrow serial="02">Active monitors</Eyebrow>
-          <span style={{ flex: 1, height: 1, background: S.border }} />
-          <span className="sp-mono" style={{ fontSize: 10, color: S.text3 }}>
-            {monitors.length} watching
-          </span>
-        </div>
-
-        {monitors.length === 0 ? (
-          <div
-            style={{
-              padding: 28,
-              background: S.surface,
-              border: `1px dashed ${S.borderHi}`,
-              borderRadius: 14,
-              textAlign: "center",
-              color: S.text3,
-            }}
-          >
-            <Eyebrow>no active monitors</Eyebrow>
-            <div style={{ marginTop: 10, fontSize: 14 }}>
-              Add a ticker above to begin proactive monitoring.
-            </div>
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {monitors.map((m) => {
-              const hours = (m.cadence_seconds / 3600).toFixed(0);
-              const rows = history[m.ticker];
-              return (
-                <div
-                  key={m.ticker}
-                  style={{
-                    padding: 22,
-                    background: S.surface,
-                    border: `1px solid ${S.border}`,
-                    borderRadius: 14,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      justifyContent: "space-between",
-                      gap: 16,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: 16,
-                        alignItems: "center",
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <span
-                        className="sp-mono"
-                        style={{
-                          fontSize: 18,
-                          fontWeight: 600,
-                          color: S.coral,
-                          padding: "5px 12px",
-                          background: S.coralSoft,
-                          border: `1px solid ${S.coralLine}`,
-                          borderRadius: 6,
-                          letterSpacing: 1,
-                        }}
-                      >
-                        {m.ticker}
-                      </span>
-                      <div>
-                        <div
-                          className="sp-mono"
-                          style={{
-                            fontSize: 11,
-                            color: S.text3,
-                            letterSpacing: 0.4,
-                            marginBottom: 4,
-                          }}
-                        >
-                          cadence {hours}h · last run{" "}
-                          {m.last_run_at
-                            ? new Date(m.last_run_at).toLocaleString()
-                            : "—"}
-                        </div>
-                        <div style={{ display: "flex", gap: 18 }}>
-                          <Mini
-                            label="μ price"
-                            value={
-                              m.baseline_price_mean != null
-                                ? `$${m.baseline_price_mean.toFixed(2)}`
-                                : "—"
-                            }
-                          />
-                          <Mini
-                            label="σ price"
-                            value={
-                              m.baseline_price_std != null
-                                ? `±${m.baseline_price_std.toFixed(2)}`
-                                : "—"
-                            }
-                          />
-                          <Mini
-                            label="μ volume"
-                            value={
-                              m.baseline_volume_avg != null
-                                ? formatVolume(m.baseline_volume_avg)
-                                : "—"
-                            }
-                          />
-                        </div>
-                        {m.peers && m.peers.length > 0 && (
-                          <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-                            <span
-                              className="sp-mono"
-                              style={{ fontSize: 10, color: S.text3 }}
-                            >
-                              peers:
-                            </span>
-                            {m.peers.map((p) => (
-                              <Tag key={p} color={S.azure}>
-                                {p}
-                              </Tag>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <Btn ghost small onClick={() => loadHistory(m.ticker)}>
-                        History
-                      </Btn>
-                      <Btn
-                        ghost
-                        small
-                        onClick={() => remove(m.ticker)}
-                        style={{ color: S.rose, borderColor: `${S.rose}3a` }}
-                      >
-                        Stop
-                      </Btn>
-                    </div>
-                  </div>
-
-                  {rows !== undefined && (
-                    <div
-                      style={{
-                        marginTop: 18,
-                        paddingTop: 16,
-                        borderTop: `1px solid ${S.border}`,
-                      }}
-                    >
-                      <Eyebrow style={{ marginBottom: 10 }}>
-                        proactive alerts
-                      </Eyebrow>
-                      {rows.length === 0 ? (
-                        <div
-                          className="sp-mono"
-                          style={{ fontSize: 11, color: S.text3 }}
-                        >
-                          no alerts fired yet — baselines still settling
-                        </div>
-                      ) : (
-                        <div
-                          style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 8,
-                          }}
-                        >
-                          {rows.map((h) => (
-                            <a
-                              key={h.job_id}
-                              href={`/jobs/${h.job_id}`}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 12,
-                                padding: "8px 12px",
-                                background: S.surfaceHi,
-                                borderRadius: 8,
-                                textDecoration: "none",
-                                color: S.text,
-                              }}
-                            >
-                              <Tag color={S.coral} solid>
-                                alert
-                              </Tag>
-                              <span
-                                className="sp-mono"
-                                style={{ fontSize: 11, color: S.text2 }}
-                              >
-                                {new Date(h.created_at).toLocaleString()}
-                              </span>
-                              <span style={{ flex: 1 }} />
-                              <span
-                                className="sp-mono"
-                                style={{ fontSize: 11, color: S.text3 }}
-                              >
-                                {(h.triggers_fired || []).join(" · ") || "—"}
-                              </span>
-                              <span style={{ color: S.coral }}>→</span>
-                            </a>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-    </div>
+    </main>
   );
 }
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <Eyebrow>{label}</Eyebrow>
-      {children}
-    </label>
-  );
-}
-
-function Mini({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span
-        className="sp-mono"
-        style={{ fontSize: 9, color: S.text3, letterSpacing: 0.5 }}
-      >
-        {label.toUpperCase()}
-      </span>
-      <span
-        className="sp-num"
-        style={{ fontSize: 14, color: S.text, fontWeight: 500 }}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function formatVolume(v: number): string {
-  if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
-  if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
-  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
-  return v.toFixed(0);
-}
-
-const inputStyle: React.CSSProperties = {
-  background: S.surfaceHi,
-  border: `1px solid ${S.border}`,
-  borderRadius: 8,
-  padding: "9px 12px",
-  fontFamily: S.fMono,
-  fontSize: 13,
-  color: S.text,
-  outline: "none",
-};
