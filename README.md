@@ -6,6 +6,74 @@ Built for the **Uniparticle Engineering Assessment (CS-001 Rev. B)**.
 
 ---
 
+## TL;DR — what's delivered
+
+Every mandatory and "spectacular outcome" requirement in the brief is implemented, tested, and documented. The line-by-line proof matrix is below in *Brief compliance matrix*; the highlights:
+
+- ✅ **All §2 mandatory items** — async `POST /analyze` + `GET /status/{id}`, 5 tools (3 required + 2 bonus), structured Pydantic JSON, env-driven config
+- ✅ **All §3 advanced items** — reflection loop with the 3 brief-mandated triggers, persistent monitoring with the 3 trigger conditions, per-job logs + token+cost ledger + tool budget, ≥3 documented test cases + ½-page eval discussion, Dockerfile **and** docker-compose
+- ✅ **All §5 deliverables** — source code, Dockerfile, compose, README (this file), `requirements.txt`+`pyproject.toml`, `.env.example`, `sample_output.json`, `postman_collection.json`
+- ➕ **Bonus** — Next.js 14 frontend with live SSE, LLM model bake-off ([`docs/model_benchmark.md`](docs/model_benchmark.md)), Playwright E2E suite, Prometheus + Grafana dashboard, alembic migrations, `pybreaker` circuit breakers + `tenacity` retries, Redis TTL caching + URL dedup, slowapi rate limits, request-id propagation, structlog JSON logs
+
+### Production-grade engineering surface (not asked, included)
+
+| Concern | What we did |
+|---|---|
+| **Database** | **PostgreSQL** as primary (`asyncpg`), **SQLite** fallback for single-container mode — same SQLAlchemy 2.0 async ORM models for both |
+| **Schema migrations** | **Alembic** migrations under `backend/alembic/` — `alembic upgrade head` runs in `entrypoint.sh` on container start |
+| **Queue** | **Redis** + `arq` workers (native asyncio, cron built in) — `analyze_ticker` + `monitor_tick` jobs |
+| **Caching** | **Redis** with per-source TTLs (yfinance 5 min, news 1 hr, EDGAR 24 hr) + URL/title dedup to stretch NewsAPI's 100/day free tier |
+| **Resilience** | `pybreaker` per upstream (yfinance, NewsAPI, Marketaux, OpenRouter, EDGAR) + `tenacity` retries with exponential backoff + jitter |
+| **HTTP** | Singleton `httpx.AsyncClient` with HTTP/2 + connection pooling |
+| **Observability** | `structlog` JSON logs with request-id, Prometheus `/metrics`, 17-panel Grafana dashboard JSON (`observability/grafana/`) |
+| **Cost controls** | Per-job token ledger in DB (`llm_calls` table), `pricing.yaml` for per-model cost, `MAX_TOOL_CALLS` and `MAX_TOKENS_PER_JOB` budgets enforced in `JobBudget` |
+| **Rate limiting** | `slowapi` on `/analyze` (10/min) and `/monitor_start` (5/min) |
+| **CI** | GitHub Actions: ruff + mypy + 33-test pytest + docker build smoke + frontend lint+build |
+| **Streaming UX** | Server-Sent Events (`/status/{id}/stream`) replayed from a Postgres event log so reconnects survive crashes |
+| **Tests** | 33 pytest cases (`backend/tests/`) + 6 golden eval cases (`backend/eval/golden_cases.yaml`) + Playwright E2E (`frontend/e2e/`) |
+
+### Where to find tests, eval cases, and results
+
+| Artifact | Path | What's in it |
+|---|---|---|
+| **Unit + integration tests** (33 cases) | `backend/tests/` | `test_schemas.py` (sentiment bounds, exactly-3 findings, alert-tag propagation), `test_reflection.py` (all 3 triggers), `test_monitoring_triggers.py` (5-article / 2σ price / 2× volume), `test_planner.py`, `test_persistence.py`, `test_budget.py`, `test_dedupe.py`, `test_events_backpressure.py`, `test_tool_executor_degraded.py` |
+| **Pytest conftest** | `backend/tests/conftest.py` | In-memory SQLite + httpx mocks — no external calls during `make test` |
+| **Golden eval cases** (6) | `backend/eval/golden_cases.yaml` | AAPL self-correlation, unknown ticker (`ZZZZZ123`), delisted (`LEHMQ`), TSLA, KO sector-correlated, MSFT |
+| **LLM-as-judge harness** | `backend/eval/judge.py` + `backend/eval/rubric.md` | 5-dimension 0–5 rubric |
+| **Eval runner** | `backend/eval/run_eval.py` | `make eval` → drives the real agent through all 6 golden cases |
+| **LLM model bake-off runner** | `backend/eval/run_model_benchmark.py` + `model_benchmark.yaml` | Drives 3 models (Grok 4.3, GPT-5.4, DeepSeek V4 Pro) through 3 tasks |
+| **LLM bake-off results** | [`docs/model_benchmark.md`](docs/model_benchmark.md) + [`docs/model_benchmark.pdf`](docs/model_benchmark.pdf) | Pass-rate, p50/p95 latency, tokens, $/run per model — drives the primary/fallback model choice |
+| **End-to-end UI tests** | `frontend/e2e/` | `analyze.spec.ts`, `monitor.spec.ts`, `full_ui.spec.ts` (Playwright against a real running stack) |
+| **Sample passing report** | `sample_output.json` | Real validated `AnalysisReport` instance (passes `model_validate`) |
+| **Postman collection** (with example responses) | `postman_collection.json` (also mirrored at `docs/postman_collection.json`) | Importable in Postman/Insomnia for one-click reviewer testing |
+| **Monitoring operator notes** | `docs/monitoring.md` | Trigger semantics, cron chain, failure modes |
+| **CI run logs** | `.github/workflows/` → GitHub Actions tab | ruff + mypy + pytest + docker-build smoke + frontend lint+build (green on every push) |
+
+Run them locally:
+
+```bash
+make test       # pytest, ~5 s, no external calls
+make eval       # 6 golden cases against the real agent (needs OPENROUTER_API_KEY)
+make lint       # ruff
+make typecheck  # mypy
+cd backend && python -m eval.run_model_benchmark   # regenerate docs/model_benchmark.md
+cd frontend && npm run e2e                          # Playwright against docker compose stack
+```
+
+### Required secrets (3) — paste into `.env`
+
+| Variable | Where to get | Free tier | Why we need it |
+|---|---|---|---|
+| `OPENROUTER_API_KEY` | https://openrouter.ai/keys | Pay-as-you-go (~$0.006 / full run on Grok 4.3) | LLM planner + reflection + synthesis |
+| `NEWSAPI_KEY` | https://newsapi.org | 100 req/day | Tool 2 news retrieval |
+| `MARKETAUX_KEY` | https://www.marketaux.com | 100 req/day | Sentiment cross-check + financial-news filtering |
+
+Optional: `ALPHAVANTAGE_KEY`, `FINNHUB_KEY` (used as secondary fallbacks only — the app runs without them).
+
+Then: `docker compose up --build` → open <http://localhost:3000>. That's it.
+
+---
+
 ## Architecture
 
 ```mermaid
