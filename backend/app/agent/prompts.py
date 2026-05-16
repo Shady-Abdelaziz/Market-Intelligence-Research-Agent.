@@ -78,8 +78,10 @@ useful. Rules:
     * catalysts: 3-5 short bullets of upcoming events or already-fired
       triggers that could move the stock (earnings prints, product launches,
       regulatory decisions, macro events) — only those evidenced by news or
-      filings in tool_results.
+      filings in tool_results. Emit `[]` (empty array), not null, when no
+      items apply.
     * risks: 3-5 short bullets of downside drivers grounded in tool_results.
+      Emit `[]` (empty array), not null, when no items apply.
     * valuation_context: one sentence tying the P/E and price-to-52w-range to
       the sector/correlation picture.
   If the report is degraded (degraded=true) or core market_data is missing,
