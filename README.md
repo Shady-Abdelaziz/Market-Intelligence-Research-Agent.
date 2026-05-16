@@ -158,6 +158,7 @@ A real validated report is at `sample_output.json` (passes `AnalysisReport.model
 | `.env.example` | `.env.example` (all required env vars enumerated) |
 | Sample output | `sample_output.json` (validates against `AnalysisReport` schema) |
 | Postman collection | `docs/postman_collection.json` (all endpoints with example requests + responses) |
+| Monitor page usage guide | `docs/monitoring.md` (UI walkthrough + CLI equivalents + troubleshooting) |
 
 ---
 
