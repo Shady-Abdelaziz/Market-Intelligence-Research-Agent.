@@ -92,6 +92,43 @@ const SPECTRUM_CSS = `
   .sp-page ::-webkit-scrollbar-track { background: transparent; }
   .sp-page ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.10); border-radius: 4px; }
   .sp-page ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.20); }
+  @media print {
+    @page { size: A4; margin: 14mm 12mm; }
+    html, body { background: white !important; }
+    .sp-no-print, .sp-pulse, .sp-caret { display: none !important; animation: none !important; }
+    .sp-page { background: white !important; min-height: 0 !important; }
+    .sp-page > div[style*="radial-gradient"] { display: none !important; }
+    .sp-page header, .sp-page aside, .sp-page footer { display: none !important; }
+    /* Collapse the two-column report grid into one continuous column */
+    .sp-page > div > div[style*="grid-template-columns"] {
+      display: block !important;
+      padding: 0 !important;
+    }
+    .sp-page main { display: block !important; }
+    .sp-page main > section,
+    .sp-page main > div[style*="border-radius"] {
+      page-break-inside: avoid;
+      break-inside: avoid;
+      margin: 0 0 12mm 0 !important;
+      box-shadow: none !important;
+      background: white !important;
+      border: 1px solid #e5e2dc !important;
+    }
+    .sp-page section { background: white !important; }
+    .sp-page h1 { font-size: 36pt !important; line-height: 1.05 !important; white-space: normal !important; }
+    .sp-page [class*="sticky"] { position: static !important; }
+    /* Hero block: tighten and let the page flow into the report */
+    .sp-page section[style*="padding: 48px"] { padding: 0 0 8mm 0 !important; }
+    /* Print header injected by the body */
+    .sp-print-header {
+      display: block !important;
+      padding: 0 0 6mm 0;
+      margin: 0 0 6mm 0;
+      border-bottom: 2px solid #1a1614;
+      font-family: ${S.fSans};
+    }
+  }
+  .sp-print-header { display: none; }
 `;
 
 export function SpectrumGlobals() {

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import {
   Btn,
   CiteChip,
@@ -142,8 +142,100 @@ export default function SpectrumLive({ jobId }: { jobId?: string } = {}) {
   );
 }
 
+function ExportMenu({
+  onJson,
+  onPdf,
+}: {
+  onJson: () => void;
+  onPdf: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <Btn
+        ghost
+        small
+        onClick={() => setOpen((v) => !v)}
+        iconRight={<span style={{ fontSize: 9 }}>▾</span>}
+      >
+        Export
+      </Btn>
+      {open && (
+        <div
+          role="menu"
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            right: 0,
+            minWidth: 180,
+            padding: 6,
+            background: S.surface,
+            border: `1px solid ${S.border}`,
+            borderRadius: 10,
+            boxShadow: "0 10px 32px rgba(0,0,0,0.10)",
+            zIndex: 60,
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+          }}
+        >
+          {[
+            { label: "Download JSON", sub: "raw report payload", run: onJson },
+            { label: "Download PDF", sub: "print-formatted dossier", run: onPdf },
+          ].map((it) => (
+            <button
+              key={it.label}
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                it.run();
+              }}
+              style={{
+                appearance: "none",
+                background: "transparent",
+                border: "none",
+                textAlign: "left",
+                cursor: "pointer",
+                padding: "10px 12px",
+                borderRadius: 6,
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+                fontFamily: S.fSans,
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = S.surfaceHi)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              <span style={{ fontSize: 13, color: S.text, fontWeight: 500 }}>
+                {it.label}
+              </span>
+              <span className="sp-mono" style={{ fontSize: 10, color: S.text3 }}>
+                {it.sub}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SpectrumTopBar() {
-  const { state } = useStream();
+  const { state, controls } = useStream();
   const status = state.done
     ? "filed"
     : state.currentTool
@@ -151,6 +243,30 @@ function SpectrumTopBar() {
       : state.events.length === 0
         ? "queued"
         : "thinking";
+  const exportJson = () => {
+    if (!state.report) return;
+    const blob = new Blob([JSON.stringify(state.report, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `mira-${state.ticker || "report"}-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+  const exportPdf = () => window.print();
+  const share = async () => {
+    const url = window.location.href;
+    try {
+      await navigator.clipboard.writeText(url);
+      alert("Dossier URL copied to clipboard");
+    } catch {
+      window.prompt("Copy the dossier URL:", url);
+    }
+  };
   return (
     <header
       style={{
@@ -260,6 +376,18 @@ function SpectrumTopBar() {
           </span>{" "}
           <span style={{ color: S.text3 }}>/ $0.05</span>
         </div>
+        <span style={{ width: 1, height: 20, background: S.border, margin: "0 4px" }} />
+        {state.done && (
+          <div className="sp-no-print" style={{ display: "flex", gap: 8 }}>
+            <Btn ghost small onClick={controls.replay}>
+              ↻ Replay
+            </Btn>
+            <ExportMenu onJson={exportJson} onPdf={exportPdf} />
+            <Btn primary small iconRight={<span>→</span>} onClick={share}>
+              Share
+            </Btn>
+          </div>
+        )}
         <span style={{ width: 1, height: 20, background: S.border, margin: "0 4px" }} />
         <div
           style={{
@@ -502,8 +630,44 @@ function SkelStat({ label }: { label: string }) {
 
 function SpectrumReport() {
   const { state } = useStream();
+  const printDate = new Date().toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
   return (
     <main style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div className="sp-print-header" aria-hidden>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: -0.4 }}>
+            M.I.R.A.{" "}
+            <span style={{ fontWeight: 400, color: "#666", fontSize: 14 }}>
+              · Market Intelligence & Research Agent
+            </span>
+          </div>
+          <div style={{ fontSize: 11, color: "#666" }}>{printDate}</div>
+        </div>
+        <div
+          style={{
+            marginTop: 6,
+            fontSize: 12,
+            color: "#444",
+            display: "flex",
+            gap: 14,
+            flexWrap: "wrap",
+          }}
+        >
+          {state.ticker && (
+            <span>
+              <strong>{state.exchange || "NYSE"} : {state.ticker}</strong>
+              {state.companyName ? ` · ${state.companyName}` : ""}
+            </span>
+          )}
+          {state.query && <span>“{state.query}”</span>}
+        </div>
+      </div>
       <DegradedBanner />
       <ProvenanceCard />
       <MarketCard />
@@ -1975,47 +2139,6 @@ function SpectrumFooter() {
         <Tag color={state.done ? S.mint : S.coral} dot>
           {state.done ? "all circuits closed" : "live"}
         </Tag>
-      </div>
-      <div style={{ display: "flex", gap: 10 }}>
-        <Btn ghost small onClick={controls.replay}>
-          ↻ Replay run
-        </Btn>
-        <Btn
-          ghost
-          small
-          onClick={() => {
-            if (!state.report) return;
-            const blob = new Blob([JSON.stringify(state.report, null, 2)], {
-              type: "application/json",
-            });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `mira-${state.ticker || "report"}-${Date.now()}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-          }}
-        >
-          Export JSON
-        </Btn>
-        <Btn
-          primary
-          small
-          iconRight={<span>→</span>}
-          onClick={async () => {
-            const url = window.location.href;
-            try {
-              await navigator.clipboard.writeText(url);
-              alert("Dossier URL copied to clipboard");
-            } catch {
-              window.prompt("Copy the dossier URL:", url);
-            }
-          }}
-        >
-          Share dossier
-        </Btn>
       </div>
     </footer>
   );
