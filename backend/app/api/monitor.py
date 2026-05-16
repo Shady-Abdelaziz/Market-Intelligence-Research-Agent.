@@ -104,12 +104,11 @@ async def monitor_start(request: Request, req: MonitorStartRequest) -> dict[str,
         )
     else:
         # Standalone fallback — mirror analyze.py's behaviour so single-
-        # container deploys still produce a baseline report.
-        import asyncio
+        # container deploys still produce a baseline report. Supervised so
+        # a worker crash still terminates the job row + SSE stream.
+        from app.workers.jobs import spawn_inline_job
 
-        from app.workers.jobs import analyze_ticker
-
-        asyncio.create_task(analyze_ticker({}, initial_job_id))
+        spawn_inline_job(initial_job_id)
 
     return {
         "id": target_id,

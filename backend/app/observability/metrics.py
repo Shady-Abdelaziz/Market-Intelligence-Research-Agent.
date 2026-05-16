@@ -65,3 +65,7 @@ circuit_breaker_state = Gauge(
 )
 cache_hits_total = Counter("mira_cache_hits_total", "Cache hits", ["cache"])
 cache_misses_total = Counter("mira_cache_misses_total", "Cache misses", ["cache"])
+sse_dropped_events_total = Counter(
+    "mira_sse_dropped_events_total",
+    "In-process SSE events that were dropped due to subscriber backpressure",
+)

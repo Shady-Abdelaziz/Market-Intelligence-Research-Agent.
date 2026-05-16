@@ -27,7 +27,9 @@ test.describe("analyze flow", () => {
       if (s.ok()) {
         const body = await s.json();
         if (body.status === "completed") {
-          report = body.result;
+          // /status exposes the synthesized payload as `report`
+          // (backend/app/api/status.py: out["report"] = job.result_json).
+          report = body.report;
           break;
         }
         if (body.status === "failed") throw new Error(`job failed: ${body.error}`);

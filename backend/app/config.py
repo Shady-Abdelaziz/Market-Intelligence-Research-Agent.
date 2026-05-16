@@ -71,12 +71,29 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     frontend_origin: str = "http://localhost:3000"
+    # Comma-separated list of additional allowed origins for CORS. If empty,
+    # the allowlist is just [frontend_origin]. Never a wildcard with
+    # allow_credentials=True (browsers reject that combination, and it
+    # nullifies the allowlist's security intent).
+    cors_origins: str = ""
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "json"
 
     @property
     def redis_enabled(self) -> bool:
         return bool(self.redis_url)
+
+    @property
+    def cors_allow_origins(self) -> list[str]:
+        extra = [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        # Preserve order, dedupe.
+        seen: set[str] = set()
+        out: list[str] = []
+        for o in [self.frontend_origin, *extra]:
+            if o and o not in seen:
+                seen.add(o)
+                out.append(o)
+        return out
 
     @property
     def is_sqlite(self) -> bool:

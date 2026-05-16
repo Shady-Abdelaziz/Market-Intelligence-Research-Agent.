@@ -211,9 +211,18 @@ async def run(state: AgentState, tools_by_name: dict[str, Tool], budget: JobBudg
                             citation_urls.append(url)
             else:
                 errors.append(f"{name}:{result.status}:{result.error or ''}")
-                if result.status in ("budget_exceeded",):
-                    degraded = True
-                    degradation_reason = degradation_reason or result.status.upper()
+                # ANY non-ok tool result degrades the report — previously
+                # only `budget_exceeded` did, which meant timeouts and
+                # network errors silently produced reports that looked
+                # complete. The synthesizer reads `degraded` to label the
+                # output honestly.
+                degraded = True
+                reason = f"{name.upper()}_{(result.status or 'ERROR').upper()}"
+                degradation_reason = (
+                    reason
+                    if not degradation_reason
+                    else f"{degradation_reason};{reason}"
+                )
 
         return {
             **state,

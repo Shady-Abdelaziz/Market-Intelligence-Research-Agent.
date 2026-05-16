@@ -4,6 +4,7 @@ monitoring tick.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -40,6 +41,50 @@ log = get_logger(__name__)
 async def _ensure_clients() -> None:
     init_client()
     await init_cache()
+
+
+# Hard reference set so fire-and-forget tasks aren't GC'd mid-flight in the
+# standalone (no-arq) deployment. asyncio only keeps weak references to tasks
+# returned by create_task, so without this an idle event loop could collect the
+# task and you'd see "Task was destroyed but it is pending" + lost jobs.
+_BG_TASKS: set[asyncio.Task[Any]] = set()
+
+
+async def _run_supervised(job_id: str) -> None:
+    """Wrap analyze_ticker for the standalone (no-arq) path.
+
+    analyze_ticker has its own try/except that calls JobRepo.mark_failed and
+    emits an `error` event, so under normal failure modes this wrapper is a
+    no-op. It only matters when an exception escapes that handler (e.g. the
+    DB session itself fails, or BaseException like CancelledError). In that
+    case we still want the job row to terminate and the SSE stream to close
+    instead of hanging on `queued`.
+    """
+    try:
+        await analyze_ticker({}, job_id)
+    except BaseException as e:  # noqa: BLE001
+        log.exception("standalone_job_crashed", job_id=job_id)
+        with contextlib.suppress(Exception):
+            async with get_session() as session:
+                job = await JobRepo(session).get(job_id)
+                if job and job.status not in ("failed", "completed"):
+                    await JobRepo(session).mark_failed(job_id, repr(e))
+        with contextlib.suppress(Exception):
+            await emit(job_id, "error", {"message": str(e)})
+        with contextlib.suppress(Exception):
+            await emit(job_id, "done", {"job_id": job_id, "ok": False})
+        if isinstance(e, (KeyboardInterrupt, SystemExit)):
+            raise
+
+
+def spawn_inline_job(job_id: str) -> asyncio.Task[None]:
+    """Spawn analyze_ticker as a supervised background task and hold a
+    strong reference until it finishes. Used only when no arq pool is
+    available (standalone deployment / tests)."""
+    task = asyncio.create_task(_run_supervised(job_id))
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
 
 
 async def analyze_ticker(ctx: dict[str, Any], job_id: str) -> None:
@@ -255,20 +300,19 @@ async def monitor_tick(ctx: dict[str, Any], target_id: str) -> None:
                 "captured_at": datetime.now(UTC).isoformat(),
             }
 
-        # Persist new baselines + article hashes regardless. Re-read the
-        # target inside this session so the merged URL list reflects any
-        # writes another tick may have made since we read up top.
+        # Persist new baselines + article hashes regardless. The repo call
+        # below performs the read-merge-write atomically (row lock on
+        # Postgres; single-writer serialization on SQLite) so that two
+        # concurrent ticks against the same target can't clobber each
+        # other's URL history.
         new_job_id: str | None = None
         async with get_session() as session:
-            fresh = await MonitorRepo(session).get_by_id(target_id)
-            base_urls = list(fresh.last_seen_article_urls or []) if fresh else []
-            merged_urls = list(dict.fromkeys(base_urls + article_hashes))[-50:]
-            await MonitorRepo(session).update_baselines_and_run(
+            await MonitorRepo(session).merge_seen_urls_and_update_baselines(
                 target_id=target.id,
+                new_url_hashes=article_hashes,
                 baseline_price_mean=baselines.mean,
                 baseline_price_std=baselines.std,
                 baseline_volume_avg=baselines.volume_avg,
-                last_seen_article_urls=merged_urls,
             )
 
             if fired:

@@ -102,7 +102,21 @@ async def stream_status(job_id: str, request: Request) -> EventSourceResponse:
                 with contextlib.suppress(Exception):
                     await agen.aclose()
         else:
-            # Single-process fallback
+            # Single-process fallback. We track the last persisted event id
+            # we've emitted so that a `lagged` sentinel (sent when the
+            # in-process queue overflowed) can trigger a backlog re-read
+            # rather than dropping events on the floor.
+            seen_last_id: int | None = last_id
+            # Initialise from the replay we did above so the catch-up read
+            # doesn't re-emit already-sent events.
+            try:
+                async with get_session() as session:
+                    bl = await EventRepo(session).list_since(job_id, last_id)
+                    if bl:
+                        seen_last_id = bl[-1].id
+            except Exception:  # noqa: BLE001
+                pass
+
             q = subscribe(job_id)
             try:
                 while True:
@@ -112,6 +126,25 @@ async def stream_status(job_id: str, request: Request) -> EventSourceResponse:
                         msg = await asyncio.wait_for(q.get(), timeout=15.0)
                     except TimeoutError:
                         yield {"event": "ping", "data": "{}"}
+                        continue
+                    if msg["event"] == "lagged":
+                        # Catch up from the durable event log.
+                        async with get_session() as session:
+                            backlog = await EventRepo(session).list_since(
+                                job_id, seen_last_id
+                            )
+                        terminal = False
+                        for ev in backlog:
+                            yield {
+                                "id": str(ev.id),
+                                "event": ev.event_type,
+                                "data": json.dumps(ev.payload, default=str),
+                            }
+                            seen_last_id = ev.id
+                            if ev.event_type in ("done", "error"):
+                                terminal = True
+                        if terminal:
+                            break
                         continue
                     yield {
                         "event": msg["event"],
