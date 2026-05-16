@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.agent.nodes import planner
+from app.llm.budget import JobBudget
 
 
 class _FakeMessage:
@@ -44,7 +45,8 @@ def _factory(llm: _FakeLLM):
 async def _run_planner(state, llm_content: str):
     llm = _FakeLLM(llm_content)
     factory = _factory(llm)
-    out = await planner.run(state, factory)
+    budget = JobBudget(max_tool_calls=10, max_tokens=1_000_000)
+    out = await planner.run(state, factory, budget)
     return out, llm
 
 
@@ -89,6 +91,30 @@ async def test_initial_plan_falls_back_to_three_tools_when_llm_returns_nothing()
     }
     out, _ = await _run_planner(state, "not json")
     assert set(out["next_tools"]) >= {"market_data", "news_sentiment", "correlation"}
+
+
+async def test_initial_plan_unions_llm_choice_with_three_core_tools():
+    """Brief §2B mandates at least three distinct tools. If the LLM returns
+    a strict subset (e.g. just market_data), the planner must STILL plan
+    news_sentiment + correlation alongside it — not silently honor a
+    one-tool plan."""
+    state = {
+        "job_id": "j-union",
+        "query": "Quick price check on AAPL",
+        "ticker": "AAPL",
+        "company_name": "Apple Inc.",
+        "triggers_fired": [],
+        "reflection_passes": 0,
+        "tool_results": {},
+        "tools_used_order": [],
+    }
+    out, _ = await _run_planner(
+        state, '{"plan": "just price", "tools": ["market_data"]}'
+    )
+    assert set(out["next_tools"]) >= {"market_data", "news_sentiment", "correlation"}
+    # LLM's choice keeps its leading position; the union appends missing
+    # core tools in declaration order after the LLM's picks.
+    assert out["next_tools"][0] == "market_data"
 
 
 async def test_sector_correlation_trigger_adds_peer_news_and_peer_fundamentals():

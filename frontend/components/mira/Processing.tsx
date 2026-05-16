@@ -20,8 +20,8 @@ function describe(ev: { event: string; data: any }) {
   if (event === "ticker_resolved") return `resolved ticker → ${data?.ticker || "?"}`;
   if (event === "ticker_resolution_failed") return `ticker resolution failed: ${data?.reason || "unknown"}`;
   if (event === "planner_decision") return `plan · next=${data?.next_node || data?.decision || "?"}`;
-  if (event === "tool_start") return `tool ${data?.name || "?"} → ${JSON.stringify(data?.input || {})}`;
-  if (event === "tool_end") return `tool ${data?.name || "?"} ✓ ${data?.latency_ms ?? "?"}ms`;
+  if (event === "tool_start") return `tool ${data?.tool || "?"} → ${JSON.stringify(data?.input || {})}`;
+  if (event === "tool_end") return `tool ${data?.tool || "?"} ✓ ${data?.latency_ms ?? "?"}ms`;
   if (event === "reflection_thought") return `reflect · ${data?.thought || "..."}`;
   if (event === "replan") return `replan · ${data?.reason || "triggers fired"}`;
   if (event === "synthesis_token") return null; // skip in feed (too noisy)

@@ -35,9 +35,33 @@ async def test_job_lifecycle(session):
 @pytest.mark.asyncio
 async def test_monitor_upsert_idempotent(session):
     repo = MonitorRepo(session)
-    a = await repo.upsert("AAPL", 60, ["MSFT"])
-    b = await repo.upsert("AAPL", 60, ["MSFT"])
+    a = await repo.upsert("AAPL", 3600, ["MSFT"])
+    b = await repo.upsert("AAPL", 3600, ["MSFT"])
     assert a.id == b.id
+
+
+@pytest.mark.asyncio
+async def test_monitor_upsert_resets_article_history(session):
+    """Re-adding a monitor is "fresh start" semantics. Stale article hashes
+    from a previous registration would falsely suppress the first
+    `articles` trigger; a stale baselines_computed_at would mask the
+    age of the baselines we're about to overwrite."""
+    repo = MonitorRepo(session)
+    t = await repo.upsert("MSFT", 3600, ["AAPL"])
+    # Simulate accumulated state from a prior live monitor.
+    t.last_seen_article_urls = ["hash_a", "hash_b", "hash_c"]
+    from datetime import UTC, datetime
+
+    t.baselines_computed_at = datetime.now(UTC)
+    await session.flush()
+
+    # Re-upsert (e.g. user clicks "Add" again after a Stop).
+    t2 = await repo.upsert("MSFT", 7200, ["GOOGL"])
+    assert t.id == t2.id
+    assert t2.last_seen_article_urls == []
+    assert t2.baselines_computed_at is None
+    assert t2.cadence_seconds == 7200
+    assert t2.peers == ["GOOGL"]
 
 
 @pytest.mark.asyncio

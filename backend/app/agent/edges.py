@@ -16,6 +16,6 @@ def after_ticker_extractor(state: AgentState) -> Literal["planner", "synthesizer
 
 def after_reflection(state: AgentState) -> Literal["planner", "synthesizer"]:
     s = get_settings()
-    if state.get("needs_replan") and state.get("reflection_passes", 0) <= s.max_reflection_passes:
+    if state.get("needs_replan") and state.get("reflection_passes", 0) < s.max_reflection_passes:
         return "planner"
     return "synthesizer"

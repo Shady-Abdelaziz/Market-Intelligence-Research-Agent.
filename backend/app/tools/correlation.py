@@ -64,8 +64,12 @@ def _compute_correlations(
             vs_peers[p] = c
 
     return {
-        "vs_sp500": vs_sp500 if vs_sp500 is not None else 0.0,
-        "vs_sector_etf": vs_sector if vs_sector is not None else 0.0,
+        # Pass None through unchanged so downstream consumers can distinguish
+        # "unavailable" (e.g. insufficient overlapping bars, zero variance)
+        # from a real low correlation. The reflection trigger already treats
+        # None as "skip"; the schema marks both fields Optional.
+        "vs_sp500": vs_sp500,
+        "vs_sector_etf": vs_sector,
         "sector_etf_symbol": sector_etf,
         "vs_peers": vs_peers,
         "window_days": window_days,

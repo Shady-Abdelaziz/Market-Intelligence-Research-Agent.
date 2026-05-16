@@ -15,6 +15,7 @@ from typing import Any
 from app.agent.events import emit
 from app.agent.prompts import SYNTHESIZER_PROMPT, SYSTEM_PROMPT
 from app.agent.state import AgentState
+from app.agent.utils.dates import parse_published_at
 from app.api.schemas import (
     AnalysisReport,
     CorrelationAnalysis,
@@ -25,6 +26,7 @@ from app.api.schemas import (
     TokenUsage,
     ToolInvocationLog,
 )
+from app.config import get_settings
 from app.llm.budget import JobBudget
 from app.observability.logging import get_logger
 
@@ -59,11 +61,15 @@ def _build_market_snapshot(md: dict[str, Any] | None) -> MarketSnapshot | None:
 def _build_correlation(c: dict[str, Any] | None) -> CorrelationAnalysis:
     if not c:
         return CorrelationAnalysis(
-            vs_sp500=0.0, vs_sector_etf=0.0, sector_etf_symbol="SPY", vs_peers={}, window_days=0
+            vs_sp500=None,
+            vs_sector_etf=None,
+            sector_etf_symbol="SPY",
+            vs_peers={},
+            window_days=0,
         )
     return CorrelationAnalysis(
-        vs_sp500=c.get("vs_sp500") or 0.0,
-        vs_sector_etf=c.get("vs_sector_etf") or 0.0,
+        vs_sp500=c.get("vs_sp500"),
+        vs_sector_etf=c.get("vs_sector_etf"),
         sector_etf_symbol=c.get("sector_etf_symbol") or "SPY",
         vs_peers={k: float(v) for k, v in (c.get("vs_peers") or {}).items()},
         window_days=int(c.get("window_days") or 0),
@@ -82,11 +88,9 @@ def _build_distribution(ns: dict[str, Any] | None) -> SentimentDistribution:
         articles=[
             {
                 "url": a["url"],
-                "title": a.get("title") or "",
-                "source": a.get("source") or "",
-                "published_at": datetime.fromisoformat(a["published_at"].replace("Z", "+00:00"))
-                if a.get("published_at")
-                else datetime.now(UTC),
+                "title": a.get("title"),
+                "source": a.get("source"),
+                "published_at": parse_published_at(a.get("published_at")),
                 "sentiment": a.get("sentiment", "neutral"),
                 "sentiment_score": float(a.get("sentiment_score", 0.0)),
                 "rationale": a.get("rationale"),
@@ -103,12 +107,11 @@ def _build_freshness(state: AgentState) -> DataFreshness:
     edgar = state.get("tool_results", {}).get("edgar_filings") or {}
     newest = None
     for a in ns.get("articles") or []:
-        try:
-            dt = datetime.fromisoformat((a.get("published_at") or "").replace("Z", "+00:00"))
-            if newest is None or dt > newest:
-                newest = dt
-        except Exception:
+        dt = parse_published_at(a.get("published_at"))
+        if dt is None:
             continue
+        if newest is None or dt > newest:
+            newest = dt
     edgar_dt = None
     filings = edgar.get("filings") or []
     if filings:
@@ -182,10 +185,10 @@ async def run(state: AgentState, llm_factory, budget: JobBudget) -> AgentState:
     }
 
     synthesis: dict[str, Any] | None = None
+    primary_model: str | None = None
     try:
         # Stream the synthesis so the frontend sees live tokens
         full_text = ""
-        primary_model = None
         async for chunk in llm.stream(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -205,7 +208,7 @@ async def run(state: AgentState, llm_factory, budget: JobBudget) -> AgentState:
             # capture usage from the final chunk
             if chunk.usage:
                 budget.record_llm_usage(
-                    primary_model or "unknown",
+                    primary_model or get_settings().llm_primary_model,
                     chunk.usage.prompt_tokens or 0,
                     chunk.usage.completion_tokens or 0,
                 )
@@ -228,8 +231,7 @@ async def run(state: AgentState, llm_factory, budget: JobBudget) -> AgentState:
         findings.append("Additional analysis pending — insufficient data on this dimension.")
 
     # Build the final report
-    primary_model = primary_model if "primary_model" in dir() else None  # type: ignore
-    primary_model_str = state.get("llm_model_used") or "x-ai/grok-4.3"
+    primary_model_str = primary_model or get_settings().llm_primary_model
 
     report = AnalysisReport(
         company_ticker=state["ticker"],
@@ -318,7 +320,7 @@ def _make_degraded_report(state: AgentState) -> AnalysisReport:
             last_two_quarterly_revenues=[],
         ),
         correlation_analysis=CorrelationAnalysis(
-            vs_sp500=0.0, vs_sector_etf=0.0, sector_etf_symbol="SPY", vs_peers={}, window_days=0
+            vs_sp500=None, vs_sector_etf=None, sector_etf_symbol="SPY", vs_peers={}, window_days=0
         ),
         key_findings=[
             "Could not resolve a stock ticker from the query.",

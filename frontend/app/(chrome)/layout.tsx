@@ -9,6 +9,7 @@ export default function ChromeLayout({ children }: { children: React.ReactNode }
   const pathname = usePathname();
   const onMonitors = pathname.startsWith("/monitor");
   const [online, setOnline] = useState<boolean | null>(null);
+  const [lastJobId, setLastJobId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -19,6 +20,16 @@ export default function ChromeLayout({ children }: { children: React.ReactNode }
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const update = () => setLastJobId(window.localStorage.getItem("mira:last-job-id"));
+    update();
+    window.addEventListener("storage", update);
+    return () => window.removeEventListener("storage", update);
+  }, [pathname]);
+
+  const reportHref = lastJobId ? `/jobs/${lastJobId}` : "/";
 
   return (
     <>
@@ -33,7 +44,7 @@ export default function ChromeLayout({ children }: { children: React.ReactNode }
           </Link>
 
           <div className="tabs">
-            <Link href="/" className={"tab " + (!onMonitors ? "active" : "")}>
+            <Link href={reportHref} className={"tab " + (!onMonitors ? "active" : "")}>
               Report
             </Link>
             <Link href="/monitor" className={"tab " + (onMonitors ? "active" : "")}>

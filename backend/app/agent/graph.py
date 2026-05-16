@@ -41,10 +41,10 @@ def build_graph(llm_factory, tools_by_name: dict[str, Tool], budget: JobBudget):
     graph = StateGraph(AgentState)
 
     async def n_ticker(state: AgentState) -> AgentState:
-        return await ticker_node.run(state, llm_factory)
+        return await ticker_node.run(state, llm_factory, budget)
 
     async def n_plan(state: AgentState) -> AgentState:
-        return await planner_node.run(state, llm_factory)
+        return await planner_node.run(state, llm_factory, budget)
 
     async def n_tools(state: AgentState) -> AgentState:
         return await tool_node.run(state, tools_by_name, budget)

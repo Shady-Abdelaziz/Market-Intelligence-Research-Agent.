@@ -82,7 +82,7 @@ Output ONLY JSON: {"ticker": "TSLA", "company_name": "Tesla, Inc."}.
 If you cannot determine a ticker, output: {"ticker": null, "company_name": null}."""
 
 
-async def run(state: AgentState, llm_factory) -> AgentState:
+async def run(state: AgentState, llm_factory, budget: JobBudget) -> AgentState:
     query = state["query"]
     job_id = state["job_id"]
 
@@ -120,7 +120,6 @@ async def run(state: AgentState, llm_factory) -> AgentState:
             return {**state, **verified, "peers": []}
 
     # Fall back to LLM
-    budget = JobBudget.from_settings()
     llm: LLMClient = llm_factory(budget)
     try:
         resp = await llm.chat(

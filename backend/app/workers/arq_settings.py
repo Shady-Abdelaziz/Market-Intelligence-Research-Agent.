@@ -36,7 +36,10 @@ async def on_shutdown(ctx: dict) -> None:
 
 class WorkerSettings:
     functions = [analyze_ticker, monitor_tick]
-    cron_jobs = []  # populated dynamically when monitoring targets are created
+    # No static cron jobs — each monitor_tick self-enqueues the next tick
+    # via _defer_by (see jobs._reschedule_monitor_tick), keyed off the
+    # target's cadence_seconds.
+    cron_jobs = []
     redis_settings = _redis_settings()
     queue_name = "mira_jobs"
     max_jobs = 4

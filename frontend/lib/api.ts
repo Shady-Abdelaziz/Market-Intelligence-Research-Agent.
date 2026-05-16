@@ -27,7 +27,17 @@ export async function postMonitorStart(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ticker, cadence_seconds, peers }),
   });
-  if (!r.ok) throw new Error(`monitor_start ${r.status}`);
+  if (!r.ok) {
+    // Surface the structured 400 body so the UI can show "TSLA: NO_HISTORY"
+    // instead of a generic "monitor_start 400". Backend returns
+    // {detail: {code, ticker, reason}} on BASELINE_COMPUTE_FAILED.
+    const body = await r.json().catch(() => null);
+    const detail = body?.detail;
+    if (detail?.code === "BASELINE_COMPUTE_FAILED") {
+      throw new Error(`BASELINE_COMPUTE_FAILED:${detail.ticker}:${detail.reason || "unknown"}`);
+    }
+    throw new Error(`monitor_start ${r.status}`);
+  }
   return r.json();
 }
 
@@ -37,7 +47,13 @@ export async function listMonitors(): Promise<any[]> {
 }
 
 export async function deleteMonitor(ticker: string): Promise<void> {
-  await fetch(`${API_BASE}/monitor/${ticker}`, { method: "DELETE" });
+  const r = await fetch(`${API_BASE}/monitor/${ticker}`, { method: "DELETE" });
+  // Backend is idempotent (returns 200 even on missing rows). Tolerate
+  // 404 from older builds for safety; throw on real failures so the UI
+  // can surface a toast rather than silently no-op'ing.
+  if (!r.ok && r.status !== 404) {
+    throw new Error(`delete_monitor ${r.status}`);
+  }
 }
 
 export async function monitorHistory(ticker: string): Promise<any[]> {

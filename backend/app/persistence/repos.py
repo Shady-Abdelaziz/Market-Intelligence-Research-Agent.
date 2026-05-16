@@ -108,6 +108,13 @@ class MonitorRepo:
             target.cadence_seconds = cadence_seconds
             target.peers = peers
             target.active = True
+            # Re-adding a monitor is "fresh start" semantics: any in-flight
+            # article history and the stale baseline timestamp from the
+            # previous registration would falsely suppress the first
+            # `articles` trigger or mask staleness. Numeric baselines get
+            # rewritten by the caller (monitor_start) or the next tick.
+            target.last_seen_article_urls = []
+            target.baselines_computed_at = None
         else:
             target = MonitoringTarget(
                 ticker=ticker,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Request, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import text
@@ -41,7 +43,7 @@ async def ready(request: Request) -> Response:
 
     ok = all(v == "ok" or v == "disabled" for v in diagnostics.values())
     return Response(
-        content=str(diagnostics),
+        content=json.dumps(diagnostics),
         status_code=200 if ok else 503,
         media_type="application/json",
     )

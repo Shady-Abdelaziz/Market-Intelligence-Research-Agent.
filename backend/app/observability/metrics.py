@@ -53,6 +53,11 @@ monitor_triggers_total = Counter(
     "Monitoring trigger fires",
     ["trigger"],
 )
+monitor_ticks_total = Counter(
+    "mira_monitor_ticks_total",
+    "Monitor tick outcomes",
+    ["status"],
+)
 circuit_breaker_state = Gauge(
     "mira_circuit_breaker_state",
     "Circuit breaker state: 0=closed, 1=open, 2=halfopen",

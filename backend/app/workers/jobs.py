@@ -5,6 +5,7 @@ monitoring tick.
 from __future__ import annotations
 
 import contextlib
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.agent.events import emit
@@ -25,6 +26,7 @@ from app.observability.logging import get_logger, job_id_var
 from app.observability.metrics import (
     job_duration_seconds,
     jobs_total,
+    monitor_ticks_total,
     monitor_triggers_total,
 )
 from app.persistence.db import get_session
@@ -134,89 +136,184 @@ async def analyze_ticker(ctx: dict[str, Any], job_id: str) -> None:
         job_id_var.reset(token)
 
 
+async def _reschedule_monitor_tick(
+    ctx: dict[str, Any], target_id: str, cadence_seconds: int
+) -> None:
+    """Self-enqueue the next monitor tick. arq has no native runtime cron
+    API for dynamically-registered jobs, so each tick is responsible for
+    scheduling its successor — without this a `monitor_start` would only
+    ever fire once."""
+    pool = ctx.get("redis")
+    if pool is None:
+        return
+    with contextlib.suppress(Exception):
+        await pool.enqueue_job(
+            "monitor_tick",
+            target_id,
+            _queue_name="mira_jobs",
+            _defer_by=timedelta(seconds=cadence_seconds),
+        )
+
+
 async def monitor_tick(ctx: dict[str, Any], target_id: str) -> None:
-    """Periodic monitoring tick — recompute baselines, evaluate triggers."""
+    """Periodic monitoring tick — recompute baselines, evaluate triggers,
+    and chain the next tick from the `finally` clause so every exit path
+    (non-trading-day, inactive target, baseline failure, happy path)
+    keeps the schedule alive."""
     await _ensure_clients()
 
-    if not is_trading_day():
-        log.info("monitor_skip_non_trading_day", target_id=target_id)
-        return
-
+    # Read target up front so the finally has cadence/active even if the
+    # body raises. cadence_seconds defaults to settings if no row exists
+    # (in which case we won't reschedule anyway).
     async with get_session() as session:
         target = await MonitorRepo(session).get_by_id(target_id)
         if not target or not target.active:
-            return
+            monitor_ticks_total.labels(status="target_inactive").inc()
+            return  # no reschedule — target deleted/deactivated
         ticker = target.ticker
+        cadence_seconds = target.cadence_seconds
 
-    # Recompute baselines
     try:
-        baselines = await compute_baselines(
-            ticker, days=get_settings().monitor_baseline_window_days
-        )
-    except Exception as e:
-        log.warning("monitor_baseline_failed", ticker=ticker, error=str(e))
-        return
+        if not is_trading_day():
+            log.info("monitor_skip_non_trading_day", target_id=target_id)
+            monitor_ticks_total.labels(status="skipped_non_trading_day").inc()
+            return
 
-    # Fetch latest news (just for triggers, we don't classify here)
-    tools = build_tools(llm_factory_default)
-    news_tool: NewsSentimentTool = tools["news_sentiment"]  # type: ignore
-    news_result = await news_tool.invoke(budget=JobBudget.from_settings(), ticker=ticker)
+        # Recompute baselines
+        try:
+            baselines = await compute_baselines(
+                ticker, days=get_settings().monitor_baseline_window_days
+            )
+        except Exception as e:
+            log.warning("monitor_baseline_failed", ticker=ticker, error=str(e))
+            monitor_ticks_total.labels(status="failed_baseline_compute").inc()
+            return
 
-    article_hashes: list[str] = []
-    if news_result.ok and news_result.data:
-        for a in news_result.data.get("articles", []):
-            if a.get("url"):
-                article_hashes.append(url_hash(a["url"]))
-
-    fired: list[str] = []
-    if trigger_new_articles(target, article_hashes):
-        fired.append("articles")
-        monitor_triggers_total.labels(trigger="articles").inc()
-    if trigger_price_2sigma(target, baselines.last_close):
-        fired.append("price_2sigma")
-        monitor_triggers_total.labels(trigger="price_2sigma").inc()
-    if trigger_volume_2x(target, baselines.last_volume):
-        fired.append("volume_2x")
-        monitor_triggers_total.labels(trigger="volume_2x").inc()
-
-    # Persist new baselines + article hashes regardless
-    async with get_session() as session:
-        merged_urls = list(dict.fromkeys((target.last_seen_article_urls or []) + article_hashes))[
-            -50:
-        ]
-        await MonitorRepo(session).update_baselines_and_run(
-            target_id=target.id,
-            baseline_price_mean=baselines.mean,
-            baseline_price_std=baselines.std,
-            baseline_volume_avg=baselines.volume_avg,
-            last_seen_article_urls=merged_urls,
+        # Fetch latest news (just for triggers, we don't classify here)
+        tools = build_tools(llm_factory_default)
+        news_tool: NewsSentimentTool = tools["news_sentiment"]  # type: ignore
+        news_result = await news_tool.invoke(
+            budget=JobBudget.from_settings(), ticker=ticker
         )
 
+        article_hashes: list[str] = []
+        if news_result.ok and news_result.data:
+            for a in news_result.data.get("articles", []):
+                if a.get("url"):
+                    article_hashes.append(url_hash(a["url"]))
+
+        # Snapshot "new since last seen" BEFORE we re-read the target
+        # (the persistence session re-reads to close the merge race).
+        prior_seen = set(target.last_seen_article_urls or [])
+        new_articles_count = sum(1 for h in article_hashes if h not in prior_seen)
+
+        fired: list[str] = []
+        if trigger_new_articles(target, article_hashes):
+            fired.append("articles")
+            monitor_triggers_total.labels(trigger="articles").inc()
+        if trigger_price_2sigma(target, baselines.last_close):
+            fired.append("price_2sigma")
+            monitor_triggers_total.labels(trigger="price_2sigma").inc()
+        if trigger_volume_2x(target, baselines.last_volume):
+            fired.append("volume_2x")
+            monitor_triggers_total.labels(trigger="volume_2x").inc()
+
+        # Build the fire-time snapshot the UI uses for honest pill labels.
+        # All three values come from the baseline ROW the trigger compared
+        # against (i.e. the previous tick / monitor_start baseline), not
+        # the freshly-recomputed numbers — that's what the trigger actually
+        # tripped against.
+        snapshot: dict[str, Any] | None = None
         if fired:
-            # Enqueue a new analysis with PROACTIVE_ALERT tag
-            job = await JobRepo(session).create(
-                query=f"Proactive monitoring alert for {ticker} — triggers: {', '.join(fired)}",
-                ticker=ticker,
+            prev_mean = (
+                float(target.baseline_price_mean)
+                if target.baseline_price_mean is not None
+                else None
             )
-            # Tag job + link to target
-            from sqlalchemy import update
+            prev_std = (
+                float(target.baseline_price_std)
+                if target.baseline_price_std is not None
+                else None
+            )
+            prev_vol = (
+                float(target.baseline_volume_avg)
+                if target.baseline_volume_avg is not None
+                else None
+            )
+            snapshot = {
+                "new_articles": new_articles_count,
+                "price_sigma": (
+                    abs(baselines.last_close - prev_mean) / prev_std
+                    if prev_mean is not None and prev_std and prev_std > 0
+                    else None
+                ),
+                "volume_ratio": (
+                    baselines.last_volume / prev_vol
+                    if prev_vol is not None and prev_vol > 0
+                    else None
+                ),
+                "captured_at": datetime.now(UTC).isoformat(),
+            }
 
-            from app.persistence.models import Job
+        # Persist new baselines + article hashes regardless. Re-read the
+        # target inside this session so the merged URL list reflects any
+        # writes another tick may have made since we read up top.
+        new_job_id: str | None = None
+        async with get_session() as session:
+            fresh = await MonitorRepo(session).get_by_id(target_id)
+            base_urls = list(fresh.last_seen_article_urls or []) if fresh else []
+            merged_urls = list(dict.fromkeys(base_urls + article_hashes))[-50:]
+            await MonitorRepo(session).update_baselines_and_run(
+                target_id=target.id,
+                baseline_price_mean=baselines.mean,
+                baseline_price_std=baselines.std,
+                baseline_volume_avg=baselines.volume_avg,
+                last_seen_article_urls=merged_urls,
+            )
 
-            await session.execute(
-                update(Job)
-                .where(Job.id == job.id)
-                .values(
-                    alert_tag="PROACTIVE_ALERT",
-                    monitor_target_id=target.id,
-                    triggers_fired=fired,
+            if fired:
+                # Enqueue a new analysis with PROACTIVE_ALERT tag
+                job = await JobRepo(session).create(
+                    query=(
+                        f"Proactive monitoring alert for {ticker} — "
+                        f"triggers: {', '.join(fired)}"
+                    ),
+                    ticker=ticker,
                 )
-            )
-            new_job_id = str(job.id)
+                from sqlalchemy import update
 
-    if fired:
-        # Enqueue the analysis on the worker (self-enqueue via redis_pool)
-        pool = ctx.get("redis")
-        if pool:
-            await pool.enqueue_job("analyze_ticker", new_job_id, _queue_name="mira_jobs")
-        log.info("monitor_alert", ticker=ticker, triggers=fired, new_job_id=new_job_id)
+                from app.persistence.models import Job
+
+                await session.execute(
+                    update(Job)
+                    .where(Job.id == job.id)
+                    .values(
+                        alert_tag="PROACTIVE_ALERT",
+                        monitor_target_id=target.id,
+                        triggers_fired=fired,
+                        monitor_trigger_snapshot=snapshot,
+                    )
+                )
+                new_job_id = str(job.id)
+
+        if fired and new_job_id:
+            pool = ctx.get("redis")
+            if pool:
+                await pool.enqueue_job(
+                    "analyze_ticker", new_job_id, _queue_name="mira_jobs"
+                )
+            log.info(
+                "monitor_alert", ticker=ticker, triggers=fired, new_job_id=new_job_id
+            )
+
+        monitor_ticks_total.labels(status="success").inc()
+    finally:
+        # Re-read the target so a `DELETE /monitor/{ticker}` issued during
+        # this tick halts the chain instead of being clobbered by a stale
+        # read from the top of the function.
+        async with get_session() as session:
+            fresh = await MonitorRepo(session).get_by_id(target_id)
+            still_active = bool(fresh and fresh.active)
+            next_cadence = fresh.cadence_seconds if fresh else cadence_seconds
+        if still_active:
+            await _reschedule_monitor_tick(ctx, target_id, next_cadence)

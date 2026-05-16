@@ -22,6 +22,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+from app.agent.utils.dates import parse_published_at
 from app.cache.dedupe import normalize_url, title_fingerprint, url_hash
 from app.cache.redis_cache import get as cache_get
 from app.cache.redis_cache import set as cache_set
@@ -152,15 +153,6 @@ def _relevant(article: dict[str, Any], ticker: str, company_name: str | None) ->
     return False
 
 
-def _parse_published(s: str | None) -> datetime | None:
-    if not s:
-        return None
-    try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except Exception:
-        return None
-
-
 def _merge_and_dedupe(*sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_hash: dict[str, dict[str, Any]] = {}
     by_fp: dict[str, dict[str, Any]] = {}
@@ -182,7 +174,7 @@ def _merge_and_dedupe(*sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
             art["url_hash"] = h
             art["title_fingerprint"] = fp
             art["normalized_url"] = normalize_url(url)
-            art["published_dt"] = _parse_published(art.get("published_at"))
+            art["published_dt"] = parse_published_at(art.get("published_at"))
             by_hash[h] = art
             if fp:
                 by_fp[fp] = art

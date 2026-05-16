@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.agent.events import emit
 from app.agent.state import AgentState
+from app.agent.utils.dates import parse_published_at
 from app.config import get_settings
 from app.observability.metrics import reflection_passes as reflection_pass_metric
 
@@ -38,14 +39,9 @@ def trigger_stale_news(state: AgentState) -> tuple[bool, str]:
     threshold = datetime.now(UTC) - timedelta(hours=threshold_hours)
     pubs = []
     for a in articles:
-        p = a.get("published_at")
-        if not p:
-            continue
-        try:
-            dt = datetime.fromisoformat(p.replace("Z", "+00:00"))
+        dt = parse_published_at(a.get("published_at"))
+        if dt is not None:
             pubs.append(dt)
-        except Exception:
-            continue
     if not pubs:
         return True, "no parseable published_at on any article"
     if all(dt < threshold for dt in pubs):
@@ -98,7 +94,7 @@ async def run(state: AgentState) -> AgentState:
             fired_now.append(name)
 
     new_passes = state.get("reflection_passes", 0) + (1 if fired_now else 0)
-    needs_replan = bool(fired_now) and new_passes <= settings.max_reflection_passes
+    needs_replan = bool(fired_now) and new_passes < settings.max_reflection_passes
 
     if needs_replan:
         await emit(job_id, "replan", {"triggers_fired": fired_now, "pass": new_passes})

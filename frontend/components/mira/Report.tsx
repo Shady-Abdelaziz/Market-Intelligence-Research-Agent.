@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import Sparkline from "./Sparkline";
 
 interface Article {
@@ -97,9 +97,9 @@ function shortDate(s: string) {
 }
 
 const TRIGGER_DEFS = [
-  { trigger: "Sector ETF correlation > 0.95", threshold: "0.95", key: "sector_corr_high", action: "would fetch peer news + peer fundamentals" },
-  { trigger: "All news older than 72 h", threshold: "72 h", key: "news_stale", action: "would fetch SEC EDGAR filings" },
-  { trigger: "Neutral / evenly-split sentiment", threshold: "balanced", key: "sentiment_neutral", action: "would fetch SEC EDGAR filings" },
+  { trigger: "Sector ETF correlation > 0.95", threshold: "0.95", key: "sector_correlation", action: "would fetch peer news + peer fundamentals" },
+  { trigger: "All news older than 72 h", threshold: "72 h", key: "stale_news", action: "would fetch SEC EDGAR filings" },
+  { trigger: "Neutral / evenly-split sentiment", threshold: "balanced", key: "neutral_sentiment", action: "would fetch SEC EDGAR filings" },
 ];
 
 const DEGRADATION_COPY: Record<string, { headline: string; explainer: string; hint: string }> = {
@@ -238,8 +238,60 @@ function CorrRow({ label, tag, value }: { label: string; tag: string; value: num
   );
 }
 
+function downloadBlob(content: string, mime: string, filename: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Revoke after the click has been processed so Firefox doesn't choke.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportFilename(ticker: string, ext: "json" | "pdf"): string {
+  // ISO timestamp without colons so the filename works on Windows + macOS.
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  return `mira-${(ticker || "report").toLowerCase()}-${stamp}.${ext}`;
+}
+
 export default function ReportView({ report, jobId }: { report: Report; jobId: string }) {
   const m = report.market_snapshot;
+  const reportRef = useRef<HTMLElement | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
+
+  function handleJsonExport() {
+    downloadBlob(
+      JSON.stringify(report, null, 2),
+      "application/json",
+      exportFilename(report.company_ticker, "json"),
+    );
+  }
+
+  async function handlePdfExport() {
+    if (!reportRef.current || pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      // html2pdf.js accesses window at module load so it has to be dynamic-
+      // imported on the client. Default export is the factory function.
+      const mod = await import("html2pdf.js");
+      const html2pdf = (mod as any).default || mod;
+      await html2pdf()
+        .set({
+          margin: [10, 12, 10, 12],
+          filename: exportFilename(report.company_ticker, "pdf"),
+          html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+          pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+        })
+        .from(reportRef.current)
+        .save();
+    } finally {
+      setPdfBusy(false);
+    }
+  }
   const s = report.sentiment_distribution;
   const c = report.correlation_analysis;
   const rangePos = (m.price - m.fifty_two_week_low) / (m.fifty_two_week_high - m.fifty_two_week_low);
@@ -275,7 +327,7 @@ export default function ReportView({ report, jobId }: { report: Report; jobId: s
   }
 
   return (
-    <main className="container">
+    <main className="container" ref={reportRef}>
       <section>
         <div className="h-row">
           <span className="badge">{report.company_ticker} · NASDAQ</span>
@@ -290,6 +342,25 @@ export default function ReportView({ report, jobId }: { report: Report; jobId: s
               </span>
             </>
           )}
+          <span className="export-actions" style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={handleJsonExport}
+              title="Download the full AnalysisReport as JSON"
+            >
+              Export JSON
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={handlePdfExport}
+              disabled={pdfBusy}
+              title="Render this report as a PDF"
+            >
+              {pdfBusy ? "Rendering…" : "Export PDF"}
+            </button>
+          </span>
         </div>
         <h1 className="headline">{report.company_name}</h1>
         <p className="subhead">Job {jobId.slice(0, 8)} · {report.tools_used.length} tools · {report.reflection_passes} reflection passes.</p>

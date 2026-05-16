@@ -19,7 +19,11 @@ class AnalyzeResponse(BaseModel):
 
 class MonitorStartRequest(BaseModel):
     ticker: str = Field(min_length=1, max_length=16)
-    cadence_seconds: int = Field(default=86_400, ge=60)
+    # 1 h floor: ticks below this hammer yfinance + NewsAPI past their
+    # free-tier rate limits, and the brief frames monitoring as a
+    # background cadence (default 24 h, trading-day-aware), not a
+    # near-realtime poll. Tests assert this rejects sub-hour values.
+    cadence_seconds: int = Field(default=86_400, ge=3600)
     peers: list[str] = Field(default_factory=list)
 
 
@@ -53,8 +57,13 @@ class MarketSnapshot(BaseModel):
 
 
 class CorrelationAnalysis(BaseModel):
-    vs_sp500: float
-    vs_sector_etf: float
+    # Optional — the correlation tool returns None when there isn't enough
+    # overlapping return history (delisted ETF, illiquid peer, freshly
+    # IPO'd ticker, zero variance). 0.0 would be indistinguishable from
+    # a real low correlation; the reflection trigger relies on the None
+    # signal to skip the 0.95 check.
+    vs_sp500: float | None
+    vs_sector_etf: float | None
     sector_etf_symbol: str
     vs_peers: dict[str, float]
     window_days: int
@@ -62,9 +71,9 @@ class CorrelationAnalysis(BaseModel):
 
 class ArticleSentiment(BaseModel):
     url: str
-    title: str
-    source: str
-    published_at: datetime
+    title: str | None = None
+    source: str | None = None
+    published_at: datetime | None = None
     sentiment: Literal["positive", "negative", "neutral"]
     sentiment_score: float
     rationale: str | None = None

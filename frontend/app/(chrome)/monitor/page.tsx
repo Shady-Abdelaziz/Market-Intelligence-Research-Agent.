@@ -8,6 +8,12 @@ import {
   postMonitorStart,
 } from "@/lib/api";
 
+// statusOf only flags "alert" for fires within this window so the row
+// stops glowing red the day after a hit. The header "Tripped today"
+// counter uses the same window — they now agree visually.
+const MONITOR_ALERT_WINDOW_MS = 24 * 3600 * 1000;
+const MONITOR_REFRESH_INTERVAL_MS = 60_000;
+
 interface Monitor {
   id: string;
   ticker: string;
@@ -20,24 +26,56 @@ interface Monitor {
   baseline_volume_avg?: number | null;
 }
 
+interface TriggerSnapshot {
+  new_articles?: number;
+  price_sigma?: number | null;
+  volume_ratio?: number | null;
+  captured_at?: string;
+}
+
 interface HistoryEntry {
   job_id: string;
   created_at: string;
   triggers_fired?: string[];
   alert_tag?: string | null;
+  monitor_trigger_snapshot?: TriggerSnapshot | null;
   report?: any;
 }
 
 type FilterKey = "all" | "alert" | "watching" | "quiet";
 
+function recentlyFired(h: HistoryEntry[] | undefined): boolean {
+  if (!h?.length) return false;
+  return h.some((row) => {
+    if (!row.created_at) return false;
+    if (!(row.triggers_fired || []).length) return false;
+    return Date.now() - new Date(row.created_at).getTime() < MONITOR_ALERT_WINDOW_MS;
+  });
+}
+
 function statusOf(m: Monitor, history: HistoryEntry[] | undefined): FilterKey {
-  if (history && history.some((h) => (h.triggers_fired || []).length > 0)) return "alert";
+  if (recentlyFired(history)) return "alert";
   if (m.baseline_price_mean == null) return "quiet";
   return "watching";
 }
 
 function fmtPct(v: number) {
   return (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+}
+
+function fmtSnapshotPrice(s: TriggerSnapshot | null | undefined): string {
+  if (!s || s.price_sigma == null) return "—";
+  return s.price_sigma.toFixed(2) + "σ";
+}
+
+function fmtSnapshotVol(s: TriggerSnapshot | null | undefined): string {
+  if (!s || s.volume_ratio == null) return "—";
+  return s.volume_ratio.toFixed(2) + "×";
+}
+
+function fmtSnapshotArticles(s: TriggerSnapshot | null | undefined): string {
+  if (!s || s.new_articles == null) return "—";
+  return `${s.new_articles} new`;
 }
 
 export default function MonitorsView() {
@@ -52,7 +90,6 @@ export default function MonitorsView() {
     try {
       const data = (await listMonitors()) as Monitor[];
       setMonitors(data);
-      // Fetch history per monitor in parallel
       const all = await Promise.all(
         data.map(async (m) => [m.ticker, await monitorHistory(m.ticker)] as const),
       );
@@ -64,6 +101,16 @@ export default function MonitorsView() {
 
   useEffect(() => {
     refresh();
+    // Background ticks land out-of-band; without auto-refresh the page
+    // shows stale state until the user navigates away and back. Gate on
+    // visibilityState so a backgrounded tab doesn't poll uselessly.
+    const onInterval = () => {
+      if (typeof document === "undefined" || document.visibilityState === "visible") {
+        refresh();
+      }
+    };
+    const handle = setInterval(onInterval, MONITOR_REFRESH_INTERVAL_MS);
+    return () => clearInterval(handle);
   }, []);
 
   async function add() {
@@ -82,15 +129,30 @@ export default function MonitorsView() {
       setForm({ ticker: "", peers: "", cadence: form.cadence });
       await refresh();
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "failed");
+      const raw = e instanceof Error ? e.message : "failed";
+      // BASELINE_COMPUTE_FAILED:<ticker>:<reason> from lib/api.ts — render
+      // the human-readable cause rather than a wire-format string.
+      if (raw.startsWith("BASELINE_COMPUTE_FAILED:")) {
+        const [, ticker, reason] = raw.split(":", 3);
+        setErr(`Couldn't compute baselines for ${ticker} — ${reason}. Ticker may be delisted or yfinance is rate-limited.`);
+      } else {
+        setErr(raw);
+      }
     } finally {
       setBusy(false);
     }
   }
 
   async function remove(t: string) {
-    await deleteMonitor(t);
-    await refresh();
+    if (typeof window !== "undefined" && !window.confirm(`Stop monitoring ${t}?`)) {
+      return;
+    }
+    try {
+      await deleteMonitor(t);
+      await refresh();
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "delete failed");
+    }
   }
 
   const counts = useMemo(() => {
@@ -103,16 +165,7 @@ export default function MonitorsView() {
   }, [monitors, history]);
 
   const list = monitors.filter((m) => filter === "all" || statusOf(m, history[m.ticker]) === filter);
-  const trippedToday = monitors.filter((m) => {
-    const h = history[m.ticker];
-    if (!h || !h.length) return false;
-    const newest = h[0];
-    if (!newest?.created_at) return false;
-    return (
-      (newest.triggers_fired || []).length > 0 &&
-      Date.now() - new Date(newest.created_at).getTime() < 24 * 3600 * 1000
-    );
-  }).length;
+  const trippedToday = monitors.filter((m) => recentlyFired(history[m.ticker])).length;
   const alerts30d = monitors.reduce((s, m) => {
     const h = history[m.ticker] || [];
     return (
@@ -177,17 +230,11 @@ export default function MonitorsView() {
             const h = history[m.ticker] || [];
             const newest = h[0];
             const trigs = (newest?.triggers_fired || []) as string[];
+            const snapshot = newest?.monitor_trigger_snapshot;
             const status = statusOf(m, h);
             const report = newest?.report || null;
             const price = report?.market_snapshot?.price as number | undefined;
             const pct = report?.market_snapshot?.daily_change_pct as number | undefined;
-            const vol = report?.market_snapshot?.volume as number | undefined;
-            const sigma =
-              price != null && m.baseline_price_mean != null && m.baseline_price_std
-                ? ((price - m.baseline_price_mean) / m.baseline_price_std).toFixed(2)
-                : "—";
-            const volX =
-              vol != null && m.baseline_volume_avg ? (vol / m.baseline_volume_avg).toFixed(2) : "—";
             const alertCount = h.filter((r) => (r.triggers_fired || []).length > 0).length;
             return (
               <div className="monitor-row" key={m.ticker}>
@@ -218,15 +265,21 @@ export default function MonitorsView() {
                 <div className="trigs">
                   <div className={"trig " + (trigs.includes("articles") ? "fired" : "")}>
                     <div className="lbl">Articles</div>
-                    <div className="val">{trigs.includes("articles") ? "≥5" : "—"}</div>
+                    <div className="val">
+                      {trigs.includes("articles") ? fmtSnapshotArticles(snapshot) : "—"}
+                    </div>
                   </div>
                   <div className={"trig " + (trigs.includes("price_2sigma") ? "fired" : "")}>
                     <div className="lbl">Price σ</div>
-                    <div className="val">{sigma}σ</div>
+                    <div className="val">
+                      {trigs.includes("price_2sigma") ? fmtSnapshotPrice(snapshot) : "—"}
+                    </div>
                   </div>
                   <div className={"trig " + (trigs.includes("volume_2x") ? "fired" : "")}>
                     <div className="lbl">Volume</div>
-                    <div className="val">{volX === "—" ? "—" : volX + "×"}</div>
+                    <div className="val">
+                      {trigs.includes("volume_2x") ? fmtSnapshotVol(snapshot) : "—"}
+                    </div>
                   </div>
                 </div>
                 <div className="mr-meta">
@@ -308,20 +361,15 @@ export default function MonitorsView() {
               <option value="3600">1 hour</option>
               <option value="14400">4 hours</option>
               <option value="86400">24 hours · trading days</option>
-              <option value="604800">Weekly</option>
-            </select>
-          </div>
-          <div className="field">
-            <label>Calendar</label>
-            <select defaultValue="nyse">
-              <option value="nyse">NYSE trading days</option>
-              <option value="nasdaq">NASDAQ trading days</option>
-              <option value="247">24/7</option>
             </select>
           </div>
           <button className="btn" disabled={busy || !form.ticker.trim()} onClick={add}>
             {busy ? "Adding…" : "Start watching"}
           </button>
+        </div>
+        <div className="mono" style={{ marginTop: 10, fontSize: 11, color: "var(--muted)" }}>
+          Trading calendar: NYSE (server-side, configurable via{" "}
+          <span className="mono">MONITOR_TRADING_CALENDAR</span>). Minimum cadence 1 hour.
         </div>
         {err && (
           <div className="mono" style={{ color: "var(--neg)", marginTop: 10, fontSize: 11 }}>

@@ -23,7 +23,7 @@ ALL_TOOLS = [
 INITIAL_PLAN_TOOLS = ["market_data", "news_sentiment", "correlation"]
 
 
-async def run(state: AgentState, llm_factory) -> AgentState:
+async def run(state: AgentState, llm_factory, budget: JobBudget) -> AgentState:
     """Ask the LLM what to research next, given the user query (first pass)
     or the results so far + triggers (reflection passes). Falls back to a
     deterministic plan if the LLM is unreachable or returns garbage so the
@@ -43,7 +43,6 @@ async def run(state: AgentState, llm_factory) -> AgentState:
         "tool_results_summary": _summarize_results(state.get("tool_results", {})),
         "available_tools": ALL_TOOLS,
     }
-    budget = JobBudget.from_settings()
     llm = llm_factory(budget)
 
     plan_text = (
@@ -69,9 +68,16 @@ async def run(state: AgentState, llm_factory) -> AgentState:
     except Exception as e:
         log.warning("planner_llm_failed", error=str(e), phase=context["phase"])
 
-    # Fallbacks — keep the agent productive when the LLM is silent or wrong.
-    if is_initial and not chosen:
-        chosen = INITIAL_PLAN_TOOLS[:]
+    # Brief §2B mandates use of at least three distinct tools. On the
+    # initial pass, ensure market_data / news_sentiment / correlation
+    # are ALL planned regardless of what the LLM returned — taking the
+    # union preserves any extra tool the LLM picked (e.g. an early
+    # edgar_filings for a filings-specific query) while guaranteeing the
+    # three core tools always run.
+    if is_initial:
+        for t in INITIAL_PLAN_TOOLS:
+            if t not in chosen:
+                chosen.append(t)
     if "sector_correlation" in triggers:
         # Trigger 1: brief asks for a competitor's recent news AND price action.
         # Price action lives in the correlation tool's vs_peers; we add peer

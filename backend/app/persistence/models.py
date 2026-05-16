@@ -94,6 +94,12 @@ class Job(Base):
         nullable=True,
     )
     triggers_fired = _array_text_col()
+    # Set on jobs enqueued by monitor_tick when a trigger fires. Holds the
+    # value-at-fire-time of each trigger ({"new_articles": int,
+    # "price_sigma": float|None, "volume_ratio": float|None,
+    # "captured_at": iso8601}) so the UI's pills can show real σ/× values
+    # instead of mixing "current σ" with "historical fire status."
+    monitor_trigger_snapshot = _json_col()
 
     tool_invocations: Mapped[list[ToolInvocation]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
