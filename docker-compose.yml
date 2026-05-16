@@ -42,6 +42,12 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
     command: ["api"]
 
   worker:
@@ -58,7 +64,9 @@ services:
       redis:
         condition: service_healthy
       api:
-        condition: service_started
+        # `service_healthy` (not `service_started`) so alembic finishes before
+        # the worker writes to the DB — fixes the boot-race we documented.
+        condition: service_healthy
     command: ["worker"]
 
   frontend:

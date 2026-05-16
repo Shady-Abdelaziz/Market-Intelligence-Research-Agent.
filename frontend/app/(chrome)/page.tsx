@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { postAnalyze } from "@/lib/api";
 
 interface Sample {
@@ -18,10 +18,24 @@ const SAMPLES: Sample[] = [
 ];
 
 export default function SubmitPage() {
+  return (
+    <Suspense fallback={null}>
+      <SubmitPageInner />
+    </Suspense>
+  );
+}
+
+function SubmitPageInner() {
   const router = useRouter();
+  const sp = useSearchParams();
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    const q = sp.get("q");
+    if (q) setQuery(q);
+  }, [sp]);
 
   async function submit(q: string) {
     setErr(null);

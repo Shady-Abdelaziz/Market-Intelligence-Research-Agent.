@@ -50,6 +50,7 @@ export interface Report {
   triggers_fired: string[];
   confidence: number;
   degraded?: boolean;
+  degradation_reason?: string | null;
   data_freshness: {
     newest_article_at: string | null;
     market_data_at: string;
@@ -101,6 +102,125 @@ const TRIGGER_DEFS = [
   { trigger: "Neutral / evenly-split sentiment", threshold: "balanced", key: "sentiment_neutral", action: "would fetch SEC EDGAR filings" },
 ];
 
+const DEGRADATION_COPY: Record<string, { headline: string; explainer: string; hint: string }> = {
+  TICKER_NOT_FOUND: {
+    headline: "We couldn't find a public ticker for this query.",
+    explainer:
+      "MIRA only analyses publicly-traded equities that Yahoo Finance recognises. The company you asked about may be private, delisted, or non-US — or the name may be ambiguous.",
+    hint: "Try the query with an explicit symbol — e.g. \"Analyze Tesla (TSLA)\", \"$AAPL\", or \"NASDAQ:NVDA\".",
+  },
+  MARKET_DATA_UNAVAILABLE: {
+    headline: "Market data was unavailable for this ticker.",
+    explainer: "yfinance returned no usable quote data. The ticker may be delisted, suspended, or temporarily rate-limited upstream.",
+    hint: "Retry in a minute, or try a different ticker.",
+  },
+};
+
+function DegradedView({ report, jobId }: { report: Report; jobId: string }) {
+  const reason = report.degradation_reason || "TICKER_NOT_FOUND";
+  const copy = DEGRADATION_COPY[reason] || {
+    headline: "MIRA returned a degraded report.",
+    explainer: report.analysis_summary || "Not all tools completed successfully on this run.",
+    hint: "See the diagnostics below for what we did and didn't fetch.",
+  };
+  const toolsAttempted = report.tool_invocations || [];
+  return (
+    <main className="container">
+      <section>
+        <div className="h-row">
+          <span className="badge" style={{ color: "var(--neg)", borderColor: "var(--neg)" }}>
+            DEGRADED · {reason}
+          </span>
+          <span>job {jobId.slice(0, 8)}</span>
+          <span className="pipe">·</span>
+          <span>Filed {shortDate(report.generated_at)}</span>
+        </div>
+        <h1 className="headline">{copy.headline}</h1>
+        <p className="subhead">{copy.explainer}</p>
+      </section>
+
+      <section className="card" style={{ padding: 28, marginTop: 32, borderLeft: "3px solid var(--neg)" }}>
+        <div className="eyebrow" style={{ marginBottom: 10 }}>How to fix</div>
+        <p style={{ fontSize: 16, lineHeight: 1.55, margin: 0, color: "var(--fg-2)" }}>{copy.hint}</p>
+        <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+          {["TSLA", "AAPL", "NVDA", "KO"].map((t) => (
+            <a key={t} href={`/?q=${encodeURIComponent("Analyze " + t)}`} className="btn ghost">
+              Try {t}
+            </a>
+          ))}
+          <a href="/" className="btn">New query</a>
+        </div>
+      </section>
+
+      <section className="section">
+        <header className="section-head">
+          <span className="num">Diagnostics</span>
+          <h2>What MIRA did and didn&apos;t do.</h2>
+          <p>Even on a degraded run, every tool attempt is logged so reviewers can verify the agent didn&apos;t fabricate.</p>
+        </header>
+        <div className="card" style={{ overflow: "hidden" }}>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Tool</th>
+                <th>Output</th>
+                <th>Latency</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {toolsAttempted.length === 0 ? (
+                <tr>
+                  <td colSpan={4} style={{ color: "var(--muted)", fontStyle: "italic" }}>
+                    No tool calls were made — the agent short-circuited at ticker resolution.
+                  </td>
+                </tr>
+              ) : (
+                toolsAttempted.map((t, i) => (
+                  <tr key={i}>
+                    <td className="name">{t.name}</td>
+                    <td>{t.output_summary}</td>
+                    <td className="mono tabular" style={{ fontSize: 12 }}>{t.latency_ms} ms</td>
+                    <td>
+                      <span className={"status-pill " + (t.status === "success" ? "" : "fail")}>
+                        <span className="d" />
+                        {t.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="section">
+        <header className="section-head">
+          <span className="num">Metadata</span>
+          <h2>Provenance.</h2>
+          <p>The agent still recorded its budget and reflection state so this run is auditable.</p>
+        </header>
+        <div className="card meta-card" style={{ padding: 20 }}>
+          {[
+            ["Reason", reason],
+            ["Tool calls", String(toolsAttempted.length)],
+            ["Reflection passes", String(report.reflection_passes)],
+            ["Cost", `$${report.token_usage.cost_usd.toFixed(4)}`],
+            ["Model", report.token_usage.model],
+            ["Generated", shortDate(report.generated_at)],
+          ].map(([k, v]) => (
+            <div className="meta-row" key={k}>
+              <span className="k">{k}</span>
+              <span className="v">{v}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function CorrRow({ label, tag, value }: { label: string; tag: string; value: number }) {
   const pct = Math.max(0, Math.min(1, value)) * 100;
   return (
@@ -149,6 +269,10 @@ export default function ReportView({ report, jobId }: { report: Report; jobId: s
     out[out.length - 1] = base;
     return out;
   }, [m.price]);
+
+  if (report.degraded || report.company_ticker === "UNKNOWN" || !report.company_ticker) {
+    return <DegradedView report={report} jobId={jobId} />;
+  }
 
   return (
     <main className="container">

@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(cd \"C:/Users/Shady/Desktop/market analysis/Market-Intelligence-Research-Agent\" && sed -i 's/\\\\r$//' backend/entrypoint.sh && file backend/entrypoint.sh)",
-      "Bash(docker compose *)"
+      "Bash(docker compose *)",
+      "Bash(cd \"/home/user/Market-Intelligence-Research-Agent.\" && touch .env && docker compose config 2>&1 | grep -E '\\(healthcheck|condition|depends_on|api:|worker:\\)' | head -30; rm .env)"
     ]
   }
 }
