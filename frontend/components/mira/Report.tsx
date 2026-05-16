@@ -37,8 +37,8 @@ export interface Report {
     last_two_quarterly_revenues: { quarter: string; revenue_usd: number; reported_at: string }[];
   };
   correlation_analysis: {
-    vs_sp500: number;
-    vs_sector_etf: number;
+    vs_sp500: number | null;
+    vs_sector_etf: number | null;
     sector_etf_symbol: string;
     vs_peers: Record<string, number>;
     window_days: number;
@@ -221,19 +221,101 @@ function DegradedView({ report, jobId }: { report: Report; jobId: string }) {
   );
 }
 
-function CorrRow({ label, tag, value }: { label: string; tag: string; value: number }) {
-  const pct = Math.max(0, Math.min(1, value)) * 100;
+function interpretCorr(v: number | null | undefined, kind: "index" | "peer" = "index"): string {
+  if (v == null || Number.isNaN(v)) return "no overlap window";
+  if (v <= -0.3) return kind === "peer" ? "Inversely tied to this peer" : "Inversely correlated";
+  if (v < 0.3) return kind === "peer" ? "Trades independently of this peer" : "Moves on its own";
+  if (v < 0.7) return kind === "peer" ? "Loose link to this peer" : "Mixed sector / idiosyncratic";
+  if (v < 0.95) return kind === "peer" ? "Strong tie to this peer" : "Strong sector tie";
+  return "Moves with the sector; idiosyncratic signal limited";
+}
+
+function CorrRow({
+  label,
+  tag,
+  value,
+  kind = "index",
+}: {
+  label: string;
+  tag: string;
+  value: number | null;
+  kind?: "index" | "peer";
+}) {
+  const safe = value == null || Number.isNaN(value) ? 0 : value;
+  const pct = Math.max(0, Math.min(1, safe)) * 100;
   return (
     <div className="corr-row">
       <div className="corr-label">
         {label}
         <span className="corr-tag">{tag}</span>
+        <div
+          className="corr-caption"
+          style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}
+        >
+          {interpretCorr(value, kind)}
+        </div>
       </div>
       <div className="corr-track">
         <div className="corr-fill" style={{ width: pct + "%" }} />
         <div className="corr-threshold" style={{ left: "95%" }} title="0.95 trigger" />
       </div>
-      <div className="corr-value">{value.toFixed(2)}</div>
+      <div className="corr-value">{value == null ? "—" : value.toFixed(2)}</div>
+    </div>
+  );
+}
+
+function RevenueBars({
+  rows,
+}: {
+  rows: { quarter: string; revenue_usd: number; reported_at: string }[];
+}) {
+  if (!rows.length) return null;
+  const max = Math.max(...rows.map((r) => Math.max(r.revenue_usd, 0)), 1);
+  const qoq =
+    rows.length >= 2 && rows[1].revenue_usd > 0
+      ? ((rows[0].revenue_usd - rows[1].revenue_usd) / rows[1].revenue_usd) * 100
+      : null;
+  return (
+    <div className="rev-bars" style={{ marginTop: 14 }}>
+      <div className="eyebrow" style={{ marginBottom: 8, display: "flex", justifyContent: "space-between" }}>
+        <span>Quarterly revenue</span>
+        {qoq != null && (
+          <span className={qoq >= 0 ? "up" : "down"} style={{ fontWeight: 500 }}>
+            QoQ {fmtPct(qoq)}
+          </span>
+        )}
+      </div>
+      {rows.map((r) => {
+        const rev = Math.max(r.revenue_usd, 0);
+        const width = (rev / max) * 100;
+        return (
+          <div key={r.quarter} style={{ marginBottom: 6 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 2 }}>
+              <span className="mono" style={{ color: "var(--muted)" }}>{r.quarter}</span>
+              <span className="mono tabular">
+                {rev > 0 ? "$" + fmtBig(rev) : "n/a"}
+              </span>
+            </div>
+            <div
+              style={{
+                height: 6,
+                background: "rgba(127,127,127,0.12)",
+                borderRadius: 3,
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  width: width + "%",
+                  height: "100%",
+                  background: "var(--fg)",
+                  opacity: 0.7,
+                }}
+              />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -403,6 +485,7 @@ export default function ReportView({ report, jobId }: { report: Report; jobId: s
             <span>MCAP · ${fmtBig(m.market_cap)}</span>
             <span>P/E · {m.pe_ratio != null ? m.pe_ratio.toFixed(1) : "—"}</span>
           </div>
+          <RevenueBars rows={m.last_two_quarterly_revenues || []} />
         </div>
 
         <div className="stat-grid">
@@ -441,7 +524,15 @@ export default function ReportView({ report, jobId }: { report: Report; jobId: s
               <h2>The bottom line.</h2>
               <p>A condensation of everything MIRA saw across the tools it called this pass.</p>
             </header>
-            <p className="lead">{report.analysis_summary}</p>
+            {(report.analysis_summary || "")
+              .split(/\n\n+/)
+              .map((p) => p.trim())
+              .filter(Boolean)
+              .map((para, i) => (
+                <p key={i} className="lead" style={i > 0 ? { marginTop: 14 } : undefined}>
+                  {para}
+                </p>
+              ))}
           </section>
 
           <section className="section">
@@ -527,7 +618,7 @@ export default function ReportView({ report, jobId }: { report: Report; jobId: s
               <CorrRow label="S&P 500" tag="SPY" value={c.vs_sp500} />
               <CorrRow label="Sector ETF" tag={c.sector_etf_symbol} value={c.vs_sector_etf} />
               {Object.entries(c.vs_peers).map(([p, v]) => (
-                <CorrRow key={p} label={p} tag={p} value={v} />
+                <CorrRow key={p} label={p} tag={p} value={v} kind="peer" />
               ))}
             </div>
           </section>
