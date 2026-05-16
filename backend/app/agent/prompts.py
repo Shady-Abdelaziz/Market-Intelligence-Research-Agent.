@@ -68,6 +68,22 @@ useful. Rules:
 - sentiment_score is a float in [-1.0, 1.0] reflecting the article distribution.
 - Do NOT invent numbers — every figure must come from a tool result.
 - Citation URLs are included via the citation_sources field (populated automatically).
+- extended_analysis is OPTIONAL but strongly preferred. Populate it as follows
+  (any field may be left null when tool data is insufficient):
+    * bull_case: 60-120 word paragraph; the strongest constructive read of the
+      tools' results. Reference specific data points (price action, revenue
+      print, sentiment skew, low sector correlation, etc.).
+    * bear_case: 60-120 word paragraph; the strongest cautious read of the
+      same tools. Same grounding rule.
+    * catalysts: 3-5 short bullets of upcoming events or already-fired
+      triggers that could move the stock (earnings prints, product launches,
+      regulatory decisions, macro events) — only those evidenced by news or
+      filings in tool_results.
+    * risks: 3-5 short bullets of downside drivers grounded in tool_results.
+    * valuation_context: one sentence tying the P/E and price-to-52w-range to
+      the sector/correlation picture.
+  If the report is degraded (degraded=true) or core market_data is missing,
+  leave extended_analysis as null entirely.
 
 Output ONLY a valid JSON object matching the schema. Do not include any prose
 before or after the JSON.

@@ -74,6 +74,13 @@ export interface Report {
   tools_used: string[];
   alert_tag?: string | null;
   monitor_trigger?: string | null;
+  extended_analysis?: {
+    bull_case?: string | null;
+    bear_case?: string | null;
+    catalysts?: string[];
+    risks?: string[];
+    valuation_context?: string | null;
+  } | null;
 }
 
 function fmtUsd(v: number) {
@@ -534,6 +541,76 @@ export default function ReportView({ report, jobId }: { report: Report; jobId: s
                 </p>
               ))}
           </section>
+
+          {(() => {
+            const ea = report.extended_analysis;
+            if (!ea) return null;
+            const hasAny =
+              ea.bull_case ||
+              ea.bear_case ||
+              (ea.catalysts && ea.catalysts.length) ||
+              (ea.risks && ea.risks.length) ||
+              ea.valuation_context;
+            if (!hasAny) return null;
+            return (
+              <section className="section">
+                <header className="section-head">
+                  <span className="num">§ I.5 — Outlook</span>
+                  <h2>Bull vs bear.</h2>
+                  <p>
+                    The analyst-style read of the same tool results: two grounded narratives,
+                    near-term catalysts, downside risks, and a valuation framing.
+                  </p>
+                </header>
+                <div className="outlook-grid">
+                  {ea.bull_case && (
+                    <div className="card outlook-side bull">
+                      <div className="eyebrow">Bull case</div>
+                      <p className="lead" style={{ marginTop: 6 }}>{ea.bull_case}</p>
+                    </div>
+                  )}
+                  {ea.bear_case && (
+                    <div className="card outlook-side bear">
+                      <div className="eyebrow">Bear case</div>
+                      <p className="lead" style={{ marginTop: 6 }}>{ea.bear_case}</p>
+                    </div>
+                  )}
+                </div>
+                {((ea.catalysts && ea.catalysts.length) || (ea.risks && ea.risks.length)) && (
+                  <div className="outlook-chips">
+                    {ea.catalysts && ea.catalysts.length > 0 && (
+                      <div className="card chip-row">
+                        <div className="eyebrow" style={{ marginBottom: 8 }}>Catalysts</div>
+                        <div className="chips">
+                          {ea.catalysts.map((c, i) => (
+                            <span className="chip pos" key={i}>{c}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {ea.risks && ea.risks.length > 0 && (
+                      <div className="card chip-row">
+                        <div className="eyebrow" style={{ marginBottom: 8 }}>Risks</div>
+                        <div className="chips">
+                          {ea.risks.map((r, i) => (
+                            <span className="chip neg" key={i}>{r}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {ea.valuation_context && (
+                  <p
+                    className="mono"
+                    style={{ color: "var(--muted)", marginTop: 12, fontSize: 12 }}
+                  >
+                    Valuation · {ea.valuation_context}
+                  </p>
+                )}
+              </section>
+            );
+          })()}
 
           <section className="section">
             <header className="section-head">

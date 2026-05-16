@@ -109,6 +109,18 @@ class DataFreshness(BaseModel):
     edgar_filing_at: datetime | None
 
 
+class ExtendedAnalysis(BaseModel):
+    """Optional richer analyst-style block. The synthesizer fills any field
+    it can ground in tool results and leaves the rest null. Existing reports
+    in Postgres deserialize fine because every field is optional."""
+
+    bull_case: str | None = None
+    bear_case: str | None = None
+    catalysts: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    valuation_context: str | None = None
+
+
 class AnalysisReport(BaseModel):
     model_config = ConfigDict(json_schema_extra={"title": "M.I.R.A. Analysis Report"})
 
@@ -136,6 +148,7 @@ class AnalysisReport(BaseModel):
     tool_invocations: list[ToolInvocationLog]
     alert_tag: Literal["PROACTIVE_ALERT"] | None = None
     monitor_trigger: Literal["articles", "price_2sigma", "volume_2x"] | None = None
+    extended_analysis: ExtendedAnalysis | None = None
 
     @field_validator("key_findings")
     @classmethod

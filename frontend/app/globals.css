@@ -431,6 +431,18 @@ h1.headline {
 .footer { margin-top: 80px; padding: 32px 24px; border-top: 1px solid var(--border); display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; font-family: var(--mono); font-size: 11px; color: var(--muted); max-width: var(--maxw); margin-left: auto; margin-right: auto; }
 .footer .col-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.18em; color: var(--fg); margin-bottom: 8px; font-weight: 600; }
 
+/* outlook (§ I.5) */
+.outlook-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.outlook-side { padding: 18px; border-left: 3px solid var(--border); }
+.outlook-side.bull { border-left-color: var(--pos); }
+.outlook-side.bear { border-left-color: var(--neg); }
+.outlook-chips { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+.chip-row { padding: 16px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; line-height: 1.4; border: 1px solid var(--border); background: var(--card); }
+.chip.pos { background: var(--pos-soft); color: var(--pos); border-color: transparent; }
+.chip.neg { background: var(--neg-soft); color: var(--neg); border-color: transparent; }
+
 /* responsive */
 @media (max-width: 1024px) {
   .grid-2 { grid-template-columns: 1fr; }
@@ -443,4 +455,8 @@ h1.headline {
   .add .row { grid-template-columns: 1fr; }
   .topbar-inner { flex-wrap: wrap; }
   .footer { grid-template-columns: 1fr; }
+}
+@media (max-width: 700px) {
+  .outlook-grid { grid-template-columns: 1fr; }
+  .outlook-chips { grid-template-columns: 1fr; }
 }
