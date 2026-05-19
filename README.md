@@ -85,6 +85,12 @@ flowchart LR
 5. `GET /status/{job_id}` returns status, cost telemetry, and the final report when complete.
 6. `POST /monitor_start` persists a ticker monitor and schedules future trigger checks.
 
+
+START → ticker_extractor → planner → tool_executor → reflection_critic
+                              ↑________________________|
+                              (replan loop, محدود بـ MAX_REFLECTION_PASSES)
+                                                       ↓ (لو خلصنا)
+                                                   synthesizer → END
 ## Technology Choices
 
 | Layer | Choice | Rationale |
